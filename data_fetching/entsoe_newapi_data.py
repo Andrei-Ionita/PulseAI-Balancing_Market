@@ -1955,7 +1955,7 @@ def fetch_cross_border_schedule(out_domain, in_domain):
     try:
         response = requests.get(url, params=params, headers=headers)
         response.raise_for_status()
-        st.text(response.content)
+        
         # Parse XML response
         root = ET.fromstring(response.content)
         namespaces = {'ns': root.tag[root.tag.find("{"):root.tag.find("}")+1].strip("{}")}
@@ -2064,8 +2064,8 @@ def fetch_physical_flows(out_domain, in_domain):
     params = {
         "securityToken": api_key_entsoe,  # Replace with your actual token
         "documentType": "A11",  # Aggregated energy data report
-        "out_Domain": outer_eic,  # Other's EIC code
-        "in_Domain": inner_eic,  # Inner's EIC code
+        "out_Domain": out_domain,  # Other's EIC code
+        "in_Domain": in_domain,  # Inner's EIC code
         "periodStart": period_start,  # Start period
         "periodEnd": period_end  # End period
     }
@@ -2517,119 +2517,377 @@ eic_Hungary = "10YHU-MAVIR----U"
 # df_ro_hu = combine_physical_and_scheduled_flows_ro_hu(df_hu_ro_flow, df_ro_hu_flow, df_hu_ro_scheduled, df_ro_hu_scheduled)
 # st.dataframe(df_ro_hu)
 
+#6. Storing the devations in a dataframe========================================================================================================
+
+# Creating the deviations dataframe
+# Sample setup for timestamps (replace with actual range from your data)
+# timestamps = pd.date_range(start='2024-12-12 00:00:00', periods=96, freq='15T')
+
+# # Placeholder data for deviations from each source (replace these with actual calculations)
+# wind_deviation_actual = df_wind['Actual Production (MW)'] - df_wind['Notified Production (MW)']
+# wind_deviation_forecast_value = df_wind['Volue Forecast (MW)'] - df_wind['Notified Production (MW)']
+# wind_deviation_forecast_solcast = df_wind['Solcast Forecast (MW)'] - df_wind['Notified Production (MW)']
+
+# # Placeholder for other variables - replace with actual calculations
+# solar_deviation = [0] * len(timestamps)  # Example placeholder
+# hydro_deviation = [0] * len(timestamps)
+# consumption_deviation = [0] * len(timestamps)
+
+# # Cross-border deviations placeholders (replace with scheduled - actual flows)
+# hu_ro_deviation = [0] * len(timestamps)
+# ro_hu_deviation = [0] * len(timestamps)
+
+# # Construct the combined deviations DataFrame
+# df_deviations = pd.DataFrame({
+#     'Timestamp': df_wind['Timestamp'],
+#     'Wind_Deviation_Actual': wind_deviation_actual,
+#     'Wind_Deviation_Forecast_Value': wind_deviation_forecast_value,
+#     'Wind_Deviation_Forecast_Solcast': wind_deviation_forecast_solcast,
+#     'Solar_Deviation': solar_deviation,
+#     'Hydro_Deviation': hydro_deviation,
+#     'Consumption_Deviation': consumption_deviation,
+#     'HU_RO_Deviation': hu_ro_deviation,
+#     'RO_HU_Deviation': ro_hu_deviation
+# })
+
+# # Replace NaN or unavailable deviations with 0 or forecasts
+# df_deviations.fillna(0, inplace=True)
+
+# # Display the resulting combined deviations DataFrame
+# st.dataframe(df_deviations)
 
 # Wind Analysis================================================================================
-df_wind_notified = fetch_process_wind_notified()
-df_wind_actual = fetch_process_wind_actual_production()
-df_wind_volue = preprocess_volue_forecast(fetch_volue_wind_data())
-df_wind = combine_wind_production_data(df_wind_notified, df_wind_actual, df_wind_volue)
+# df_wind_notified = fetch_process_wind_notified()
+# df_wind_actual = fetch_process_wind_actual_production()
+# df_wind_volue = preprocess_volue_forecast(fetch_volue_wind_data())
+# df_wind = combine_wind_production_data(df_wind_notified, df_wind_actual, df_wind_volue)
 
-fetching_Cogealac_data_15min()
-df_wind_solcast = predicting_wind_production_15min()
-df_wind = add_solcast_forecast_to_wind_dataframe(df_wind, df_wind_solcast)
-st.dataframe(df_wind)
-
-
-# Replace 0 with NaN in 'Actual Production (MW)' to identify missing values
-df_wind['Actual Production (MW)'] = df_wind['Actual Production (MW)'].replace(0, None)
-
-# Add columns to indicate when forecasts should be used
-df_wind['Volue Forecast (Filtered)'] = df_wind['Volue Forecast (MW)'].where(df_wind['Actual Production (MW)'].isna())
-df_wind['Solcast Forecast (Filtered)'] = df_wind['Solcast Forecast (MW)'].where(df_wind['Actual Production (MW)'].isna())
-
-df_wind = df_wind[df_wind["Notified Production (MW)"] > 0] 
-
-# Create a long-format DataFrame for Plotly
-df_wind_long = df_wind.melt(
-    id_vars=['Timestamp'],
-    value_vars=[
-        'Actual Production (MW)',
-        'Notified Production (MW)',
-        'Volue Forecast (Filtered)',
-        'Solcast Forecast (Filtered)'
-    ],
-    var_name='Type',
-    value_name='Production (MW)'
-)
-
-# Remove rows where 'Production (MW)' is NaN
-df_wind_long = df_wind_long[df_wind_long['Production (MW)'].notna()]
+# fetching_Cogealac_data_15min()
+# df_wind_solcast = predicting_wind_production_15min()
+# df_wind = add_solcast_forecast_to_wind_dataframe(df_wind, df_wind_solcast)
+# st.dataframe(df_wind)
 
 
-# Interactive dashboard header
-st.header("Wind Production Monitoring")
+# # Replace 0 with NaN in 'Actual Production (MW)' to identify missing values
+# df_wind['Actual Production (MW)'] = df_wind['Actual Production (MW)'].replace(0, None)
 
-# Plotting Actual vs Notified Wind Production with Forecasts
-st.write("### Actual vs Notified Wind Production Over Time (With Forecasts)")
-fig_wind_forecast = px.line(
-    df_wind_long,
-    x='Timestamp',
-    y='Production (MW)',
-    color='Type',
-    line_dash='Type',
-    labels={'Production (MW)': 'Production (MW)', 'Timestamp': 'Timestamp'},
-    title="Actual vs Notified Wind Production (With Forecasts)"
-)
+# # Add columns to indicate when forecasts should be used
+# df_wind['Volue Forecast (Filtered)'] = df_wind['Volue Forecast (MW)'].where(df_wind['Actual Production (MW)'].isna())
+# df_wind['Solcast Forecast (Filtered)'] = df_wind['Solcast Forecast (MW)'].where(df_wind['Actual Production (MW)'].isna())
 
-# Customize styles: Notified should always be solid
-fig_wind_forecast.for_each_trace(lambda trace: trace.update(line_dash=None) if trace.name == 'Notified Production (MW)' else None)
+# df_wind = df_wind[df_wind["Notified Production (MW)"] > 0] 
 
-# Show the plot
-st.plotly_chart(fig_wind_forecast, use_container_width=True)
+# # Create a long-format DataFrame for Plotly
+# df_wind_long = df_wind.melt(
+#     id_vars=['Timestamp'],
+#     value_vars=[
+#         'Actual Production (MW)',
+#         'Notified Production (MW)',
+#         'Volue Forecast (Filtered)',
+#         'Solcast Forecast (Filtered)'
+#     ],
+#     var_name='Type',
+#     value_name='Production (MW)'
+# )
 
-# Assuming df_wind is your DataFrame with the following columns:
-# 'Timestamp', 'Notified Production (MW)', 'Actual Production (MW)', 'Volue Forecast (MW)', 'Solcast Forecast (MW)'
-
-# Step 1: Compute deviations
-df_wind['Deviation_Actual'] = df_wind['Actual Production (MW)'] - df_wind['Notified Production (MW)']
-df_wind['Deviation_ValueForecast'] = df_wind['Volue Forecast (MW)'] - df_wind['Notified Production (MW)']
-df_wind['Deviation_SolcastForecast'] = df_wind['Solcast Forecast (MW)'] - df_wind['Notified Production (MW)']
-
-# Step 2: Combine Actual and Forecasted Deviations
-df_wind['Deviation_Final'] = np.where(
-    df_wind['Actual Production (MW)'].notna(),
-    df_wind['Deviation_Actual'],
-    np.nan
-)
-
-# For forecasting periods
-forecast_mask = df_wind['Actual Production (MW)'].isna()
-df_wind.loc[forecast_mask, 'Deviation_Final_ValueForecast'] = df_wind['Deviation_ValueForecast']
-df_wind.loc[forecast_mask, 'Deviation_Final_SolcastForecast'] = df_wind['Deviation_SolcastForecast']
-
-# Remove the last timestamp where 'Notified Production (MW)' is incomplete (e.g., NaN or 0)
-df_wind_filtered = df_wind[df_wind['Notified Production (MW)'] > 0]
-
-# Plotting the deviations
-fig = px.line(df_wind_filtered, x='Timestamp', y='Deviation_Final',
-              labels={'Deviation_Final': 'Deviation (MW)', 'Timestamp': 'Timestamp'},
-              title="Actual and Forecasted Deviations from Notified Production")
-
-# Add Value Forecast as dashed line
-fig.add_scatter(x=df_wind_filtered['Timestamp'], 
-                y=df_wind_filtered['Deviation_Final_ValueForecast'], 
-                mode='lines', 
-                line=dict(dash='dash', color='red'), 
-                name='Deviation - Value Forecast')
-
-# Add Solcast Forecast as dashed line
-fig.add_scatter(x=df_wind_filtered['Timestamp'], 
-                y=df_wind_filtered['Deviation_Final_SolcastForecast'], 
-                mode='lines', 
-                line=dict(dash='dash', color='orange'), 
-                name='Deviation - Solcast Forecast')
-
-fig.update_layout(
-    xaxis_title='Timestamp',
-    yaxis_title='Deviation (MW)',
-    legend_title='Type'
-)
-
-# Display the chart in Streamlit
-st.plotly_chart(fig, use_container_width=True)
+# # Remove rows where 'Production (MW)' is NaN
+# df_wind_long = df_wind_long[df_wind_long['Production (MW)'].notna()]
 
 
+# # Interactive dashboard header
+# st.header("Wind Production Monitoring")
 
-# Solar Production Analysis==============================================================
+# # Plotting Actual vs Notified Wind Production with Forecasts
+# st.write("### Actual vs Notified Wind Production Over Time (With Forecasts)")
+# fig_wind_forecast = px.line(
+#     df_wind_long,
+#     x='Timestamp',
+#     y='Production (MW)',
+#     color='Type',
+#     line_dash='Type',
+#     labels={'Production (MW)': 'Production (MW)', 'Timestamp': 'Timestamp'},
+#     title="Actual vs Notified Wind Production (With Forecasts)"
+# )
+
+# # Customize styles: Notified should always be solid
+# fig_wind_forecast.for_each_trace(lambda trace: trace.update(line_dash=None) if trace.name == 'Notified Production (MW)' else None)
+
+# # Show the plot
+# st.plotly_chart(fig_wind_forecast, use_container_width=True)
+
+# # Assuming df_wind is your DataFrame with the following columns:
+# # 'Timestamp', 'Notified Production (MW)', 'Actual Production (MW)', 'Volue Forecast (MW)', 'Solcast Forecast (MW)'
+
+# # Step 1: Compute deviations
+# df_wind['Deviation_Actual'] = df_wind['Actual Production (MW)'] - df_wind['Notified Production (MW)']
+# df_wind['Deviation_ValueForecast'] = df_wind['Volue Forecast (MW)'] - df_wind['Notified Production (MW)']
+# df_wind['Deviation_SolcastForecast'] = df_wind['Solcast Forecast (MW)'] - df_wind['Notified Production (MW)']
+
+# # Step 2: Combine Actual and Forecasted Deviations
+# df_wind['Deviation_Final'] = np.where(
+#     df_wind['Actual Production (MW)'].notna(),
+#     df_wind['Deviation_Actual'],
+#     np.nan
+# )
+
+# # For forecasting periods
+# forecast_mask = df_wind['Actual Production (MW)'].isna()
+# df_wind.loc[forecast_mask, 'Deviation_Final_ValueForecast'] = df_wind['Deviation_ValueForecast']
+# df_wind.loc[forecast_mask, 'Deviation_Final_SolcastForecast'] = df_wind['Deviation_SolcastForecast']
+
+# # Remove the last timestamp where 'Notified Production (MW)' is incomplete (e.g., NaN or 0)
+# df_wind_filtered = df_wind[df_wind['Notified Production (MW)'] > 0]
+
+# # Plotting the deviations
+# fig = px.line(df_wind_filtered, x='Timestamp', y='Deviation_Final',
+#               labels={'Deviation_Final': 'Deviation (MW)', 'Timestamp': 'Timestamp'},
+#               title="Actual and Forecasted Deviations from Notified Production")
+
+# # Add Value Forecast as dashed line
+# fig.add_scatter(x=df_wind_filtered['Timestamp'], 
+#                 y=df_wind_filtered['Deviation_Final_ValueForecast'], 
+#                 mode='lines', 
+#                 line=dict(dash='dash', color='red'), 
+#                 name='Deviation - Value Forecast')
+
+# # Add Solcast Forecast as dashed line
+# fig.add_scatter(x=df_wind_filtered['Timestamp'], 
+#                 y=df_wind_filtered['Deviation_Final_SolcastForecast'], 
+#                 mode='lines', 
+#                 line=dict(dash='dash', color='orange'), 
+#                 name='Deviation - Solcast Forecast')
+
+# fig.update_layout(
+#     xaxis_title='Timestamp',
+#     yaxis_title='Deviation (MW)',
+#     legend_title='Type'
+# )
+
+# # Display the chart in Streamlit
+# st.plotly_chart(fig, use_container_width=True)
 
 
+
+# Solar Production Analysis===================================================================
+# df_solar_notified = fetch_process_solar_notified()
+# df_solar_actual = fetch_process_solar_actual_production()
+# df_solar_volue = preprocess_volue_forecast(fetch_volue_solar_data())
+# df_solar = combine_solar_production_data(df_solar_notified, df_solar_actual, df_solar_volue)
+
+# st.dataframe(df_solar)
+
+# import pandas as pd
+# import plotly.express as px
+# import streamlit as st
+# import numpy as np
+
+
+# # Step 1: Identify the last interval with actual production > 0
+# last_actual_index = df_solar[df_solar['Actual Production (MW)'] > 0].index.max()
+
+# # Step 2: Compute Deviations
+# df_solar['Deviation_Actual'] = df_solar['Actual Production (MW)'] - df_solar['Notified Production (MW)']
+# df_solar['Deviation_Forecast'] = df_solar['Volue Forecast (MW)'] - df_solar['Notified Production (MW)']
+
+# # Step 3: Split the data for solid and dashed lines
+# df_solar['Deviation_Combined'] = np.where(
+#     df_solar.index <= last_actual_index,
+#     df_solar['Deviation_Actual'],
+#     np.nan
+# )
+# df_solar['Deviation_Forecast_Line'] = np.where(
+#     df_solar.index > last_actual_index,
+#     df_solar['Deviation_Forecast'],
+#     np.nan
+# )
+
+# # Step 4: Visualization for Actual vs Notified Solar Production
+# st.title("Solar Production Monitoring")
+
+# # Plot 1: Actual vs Notified Solar Production Over Time
+# st.subheader("Actual vs Notified Solar Production Over Time")
+# fig_actual_vs_notified = px.line(
+#     df_solar, 
+#     x='Timestamp', 
+#     y=['Notified Production (MW)', 'Actual Production (MW)', 'Volue Forecast (MW)'],
+#     labels={'value': 'Production (MW)', 'Timestamp': 'Timestamp'},
+#     title="Actual vs Notified Solar Production (With Forecast)"
+# )
+# # Update line styles
+# fig_actual_vs_notified.update_traces(selector=dict(name='Notified Production (MW)'),
+#                                      line=dict(color='blue', dash='solid'))
+# fig_actual_vs_notified.update_traces(selector=dict(name='Actual Production (MW)'),
+#                                      line=dict(color='skyblue', dash='solid'))
+# fig_actual_vs_notified.update_traces(selector=dict(name='Volue Forecast (MW)'),
+#                                      line=dict(color='orange', dash='dash'))
+
+# st.plotly_chart(fig_actual_vs_notified, use_container_width=True)
+
+# # Plot 2: Actual and Forecasted Deviations
+# st.subheader("Actual and Forecasted Deviations from Notified Solar Production")
+# fig_deviation = px.line(
+#     df_solar, 
+#     x='Timestamp', 
+#     y=['Deviation_Combined', 'Deviation_Forecast_Line'],
+#     labels={'value': 'Deviation (MW)', 'Timestamp': 'Timestamp'},
+#     title="Actual and Forecasted Deviations from Notified Solar Production"
+# )
+# # Update line styles
+# fig_deviation.update_traces(selector=dict(name='Deviation_Combined'),
+#                             line=dict(color='skyblue', dash='solid'),
+#                             name="Deviation - Actual Production")
+# fig_deviation.update_traces(selector=dict(name='Deviation_Forecast_Line'),
+#                             line=dict(color='orange', dash='dash'),
+#                             name="Deviation - Forecast")
+
+# st.plotly_chart(fig_deviation, use_container_width=True)
+
+
+# Step 6: Add Deviations to Centralized DataFrame
+# df_deviations['Solar_Deviation'] = df_solar['Solar_Deviation_Final']
+
+# Hydro Production Analysis=========================================================================================
+
+# df_hydro_reservoir_actual = fetch_process_hydro_water_reservoir_actual_production()
+# df_hydro_river_actual = fetch_process_hydro_river_actual_production()
+# df_hydro_volue = fetch_volue_hydro_data()
+# df_hydro = align_and_combine_hydro_data(df_hydro_reservoir_actual, df_hydro_river_actual, df_hydro_volue)
+
+# st.dataframe(df_hydro)
+
+# # Combine Actual Hydro Production (Hydro Reservoir + Hydro River)
+# df_hydro['Hydro_Actual'] = df_hydro['Hydro Reservoir Actual (MW)'] + df_hydro['Hydro River Actual (MW)']
+
+# # Identify the last interval with actual production > 0
+# last_actual_index = df_hydro[df_hydro['Hydro_Actual'] > 0].index.max()
+
+# # Replace Hydro Actual after the last valid production with None
+# df_hydro.loc[last_actual_index + 1:, 'Hydro_Actual'] = None
+
+# # Melt the DataFrame to long format for Plotly Express
+# df_hydro_long = df_hydro.melt(id_vars=['Timestamp'], 
+#                               value_vars=['Hydro_Actual', 'Volue Forecast (MW)'],
+#                               var_name='Type', value_name='Production')
+
+# # Create line dash mapping
+# line_dash_map = {
+#     'Hydro_Actual': 'solid',
+#     'Volue Forecast (MW)': 'dash'
+# }
+
+# # Visualization: Hydro Actual vs Forecast
+# st.header("Hydro Production Monitoring")
+# st.subheader("Actual vs Forecasted Hydro Production")
+
+# fig_hydro_actual_forecast = px.line(
+#     df_hydro_long, 
+#     x='Timestamp', 
+#     y='Production', 
+#     color='Type', 
+#     line_dash='Type',
+#     line_dash_map=line_dash_map,
+#     title="Actual vs Forecasted Hydro Production",
+#     labels={'Production': 'Production (MW)', 'Timestamp': 'Timestamp'},
+#     color_discrete_map={
+#         'Hydro_Actual': 'blue',
+#         'Volue Forecast (MW)': 'orange'
+#     }
+# )
+
+# st.plotly_chart(fig_hydro_actual_forecast, use_container_width=True)
+
+# Consumption Analysis=========================================================================================
+
+# df_consumption_forecast = fetch_consumption_forecast()
+# df_consumption_actual = fetch_actual_consumption()
+# df_consumption = combine_consumption_data(df_consumption_forecast, df_consumption_actual)
+# st.dataframe(df_consumption)
+
+# import plotly.express as px
+# import streamlit as st
+
+# # Load the existing DataFrame
+# # Replace this with the actual dataframe you already have
+
+# # Drop rows with None in 'Actual Consumption (MW)' for clean plotting
+# df_actual = df_consumption.dropna(subset=['Actual Consumption (MW)'])
+
+# # Plotly Graph: Actual vs Forecasted Consumption
+# fig = px.line()
+
+# # Add Actual Consumption line
+# fig.add_scatter(
+#     x=df_actual['Timestamp'],
+#     y=df_actual['Actual Consumption (MW)'],
+#     mode='lines',
+#     name='Actual Consumption (MW)',
+#     line=dict(color='#1f77b4')  # Blue line
+# )
+
+# # Add Forecasted Consumption line
+# fig.add_scatter(
+#     x=df_consumption['Timestamp'],
+#     y=df_consumption['Consumption Forecast (MW)'],
+#     mode='lines',
+#     name='Consumption Forecast (MW)',
+#     line=dict(color='#ff7f0e')  # Orange line
+# )
+
+# # Update layout for clarity
+# fig.update_layout(
+#     title="Actual vs Forecasted Consumption Over Time",
+#     xaxis_title="Timestamp",
+#     yaxis_title="Consumption (MW)",
+#     legend_title="Type",
+#     template="plotly_dark",
+#     hovermode="x unified"
+# )
+
+# # Display in Streamlit
+# st.header("Consumption Monitoring")
+# st.write("### Actual vs Forecasted Consumption Over Time")
+# st.plotly_chart(fig, use_container_width=True)
+
+# Cross Border Analysis=========================================================================================
+
+# RO_BG
+df_physical_flow_bg_ro = fetch_physical_flows_bulgaria_to_romania()
+df_physical_flow_ro_bg = fetch_physical_flows_romania_to_bulgaria()
+df_physical_flows_ro_bg = concatenate_cross_border_flows(df_physical_flow_bg_ro, df_physical_flow_ro_bg)
+df_scheduled_flow_ro_bg = fetch_cross_border_schedule(eic_Romania, eic_Bulgaria)
+df_scheduled_flow_bg_ro = fetch_cross_border_schedule(eic_Bulgaria, eic_Romania)
+df_ro_bg = combine_physical_and_scheduled_flows_ro_bg(df_physical_flows_ro_bg, df_scheduled_flow_bg_ro, df_scheduled_flow_ro_bg)
+
+
+def calculate_excedent_deficit(df, excedent, deficit):
+    df['Net Scheduled Flow (MW)'] = df['RO → BG Scheduled Flow (MW)'] - df['BG → RO Scheduled Flow (MW)']
+    df['Net Physical Flow (MW)'] = df['RO → BG Flow (MW)'] - df['BG → RO Flow (MW)']
+    
+    # Initialize deficit and excedent
+    df[excedent] = 0
+    df[deficit] = 0
+
+    # Excedent: Net Physical Flow < Net Scheduled Flow
+    df.loc[df['Net Physical Flow (MW)'] < df['Net Scheduled Flow (MW)'], excedent] = \
+        df['Net Scheduled Flow (MW)'] - df['Net Physical Flow (MW)']
+
+    # Deficit: Net Physical Flow > Net Scheduled Flow
+    df.loc[df['Net Physical Flow (MW)'] > df['Net Scheduled Flow (MW)'], deficit] = \
+        df['Net Physical Flow (MW)'] - df['Net Scheduled Flow (MW)']
+
+    return df
+
+# Apply the logic to your dataframe
+df_ro_bg = calculate_excedent_deficit(df_ro_bg, "Excedent_RO_BG (MW)", "Deficit_RO_BG (MW)")
+
+
+st.dataframe(df_ro_bg)
+
+# RO_RS
+# df_physical_flow_ro_rs = fetch_physical_flows(eic_Romania, eic_Serbia)
+# df_physical_flow_rs_ro = fetch_physical_flows(eic_Serbia, eic_Romania)
+# df_crossborder_flow_ro_rs = fetch_cross_border_schedule(eic_Romania, eic_Serbia)
+# df_crossborder_flow_rs_ro = fetch_cross_border_schedule(eic_Serbia, eic_Romania)
+# df_ro_rs = combine_physical_and_scheduled_flows_ro_rs(df_physical_flow_rs_ro, df_physical_flow_ro_rs, df_crossborder_flow_rs_ro, df_crossborder_flow_ro_rs)
+
+# st.dataframe(df_ro_rs)

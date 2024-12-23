@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 from datetime import datetime, timedelta
 from entsoe import EntsoePandasClient
@@ -9,6 +10,12 @@ from data_fetching.entsoe_data import fetch_intraday_imbalance_data  # Importing
 from data_fetching.entsoe_data import wind_solar_generation, actual_generation_source       # Assuming this function is also available
 # Importing the wind data
 from data_fetching.entsoe_newapi_data import fetch_process_wind_notified, fetch_process_wind_actual_production, preprocess_volue_forecast, fetch_volue_wind_data, combine_wind_production_data, fetching_Cogealac_data_15min, predicting_wind_production_15min, add_solcast_forecast_to_wind_dataframe
+# Importing the solar data
+from data_fetching.entsoe_newapi_data import fetch_process_solar_notified, fetch_process_solar_actual_production, fetch_volue_solar_data, combine_solar_production_data
+# Importing the hydro data
+from data_fetching.entsoe_newapi_data import fetch_process_hydro_water_reservoir_actual_production, fetch_process_hydro_river_actual_production, fetch_volue_hydro_data, align_and_combine_hydro_data
+# Importing consumption data
+from data_fetching.entsoe_newapi_data import fetch_consumption_forecast, fetch_actual_consumption, combine_consumption_data
 
 #============================================================================Rendering the Intraday Balancing Market Page================================================================
 
@@ -92,6 +99,134 @@ def render_balancing_market_intraday_page():
     # Remove rows where 'Production (MW)' is NaN
     df_wind_long = df_wind_long[df_wind_long['Production (MW)'].notna()]
 
+    # Processing the Solar Production
+    df_solar_notified = fetch_process_solar_notified()
+    df_solar_actual = fetch_process_solar_actual_production()
+    df_solar_volue = preprocess_volue_forecast(fetch_volue_solar_data())
+    df_solar = combine_solar_production_data(df_solar_notified, df_solar_actual, df_solar_volue)
+
+    # Step 1: Identify the last interval with actual production > 0
+    last_actual_index = df_solar[df_solar['Actual Production (MW)'] > 0].index.max()
+
+    # Step 2: Compute Deviations
+    df_solar['Deviation_Actual'] = df_solar['Actual Production (MW)'] - df_solar['Notified Production (MW)']
+    df_solar['Deviation_Forecast'] = df_solar['Volue Forecast (MW)'] - df_solar['Notified Production (MW)']
+
+    # Step 3: Split the data for solid and dashed lines
+    df_solar['Deviation_Combined'] = np.where(
+        df_solar.index <= last_actual_index,
+        df_solar['Deviation_Actual'],
+        np.nan
+    )
+    df_solar['Deviation_Forecast_Line'] = np.where(
+        df_solar.index > last_actual_index,
+        df_solar['Deviation_Forecast'],
+        np.nan
+    )
+
+    # Step 4: Visualization for Actual vs Notified Solar Production
+    st.title("Solar Production Monitoring")
+
+    # Plot 1: Actual vs Notified Solar Production Over Time
+    st.subheader("Actual vs Notified Solar Production Over Time")
+    fig_actual_vs_notified = px.line(
+        df_solar, 
+        x='Timestamp', 
+        y=['Notified Production (MW)', 'Actual Production (MW)', 'Volue Forecast (MW)'],
+        labels={'value': 'Production (MW)', 'Timestamp': 'Timestamp'},
+        title="Actual vs Notified Solar Production (With Forecast)"
+    )
+    # Update line styles
+    fig_actual_vs_notified.update_traces(selector=dict(name='Notified Production (MW)'),
+                                         line=dict(color='blue', dash='solid'))
+    fig_actual_vs_notified.update_traces(selector=dict(name='Actual Production (MW)'),
+                                         line=dict(color='skyblue', dash='solid'))
+    fig_actual_vs_notified.update_traces(selector=dict(name='Volue Forecast (MW)'),
+                                         line=dict(color='orange', dash='dash'))
+
+    # Processing the hydro production data
+    df_hydro_reservoir_actual = fetch_process_hydro_water_reservoir_actual_production()
+    df_hydro_river_actual = fetch_process_hydro_river_actual_production()
+    df_hydro_volue = fetch_volue_hydro_data()
+    df_hydro = align_and_combine_hydro_data(df_hydro_reservoir_actual, df_hydro_river_actual, df_hydro_volue)
+
+    # Combine Actual Hydro Production (Hydro Reservoir + Hydro River)
+    df_hydro['Hydro_Actual'] = df_hydro['Hydro Reservoir Actual (MW)'] + df_hydro['Hydro River Actual (MW)']
+
+    # Identify the last interval with actual production > 0
+    last_actual_index = df_hydro[df_hydro['Hydro_Actual'] > 0].index.max()
+
+    # Replace Hydro Actual after the last valid production with None
+    df_hydro.loc[last_actual_index + 1:, 'Hydro_Actual'] = None
+
+    # Melt the DataFrame to long format for Plotly Express
+    df_hydro_long = df_hydro.melt(id_vars=['Timestamp'], 
+                                  value_vars=['Hydro_Actual', 'Volue Forecast (MW)'],
+                                  var_name='Type', value_name='Production')
+
+    # Create line dash mapping
+    line_dash_map = {
+        'Hydro_Actual': 'solid',
+        'Volue Forecast (MW)': 'dash'
+    }
+
+    # Visualization: Hydro Actual vs Forecast
+    st.header("Hydro Production Monitoring")
+    st.subheader("Actual vs Forecasted Hydro Production")
+
+    fig_hydro_actual_forecast = px.line(
+        df_hydro_long, 
+        x='Timestamp', 
+        y='Production', 
+        color='Type', 
+        line_dash='Type',
+        line_dash_map=line_dash_map,
+        title="Actual vs Forecasted Hydro Production",
+        labels={'Production': 'Production (MW)', 'Timestamp': 'Timestamp'},
+        color_discrete_map={
+            'Hydro_Actual': 'blue',
+            'Volue Forecast (MW)': 'orange'
+        }
+    )
+
+    # Processing the Consumption data
+    df_consumption_forecast = fetch_consumption_forecast()
+    df_consumption_actual = fetch_actual_consumption()
+    df_consumption = combine_consumption_data(df_consumption_forecast, df_consumption_actual)
+
+    # Drop rows with None in 'Actual Consumption (MW)' for clean plotting
+    df_actual = df_consumption.dropna(subset=['Actual Consumption (MW)'])
+
+    # Plotly Graph: Actual vs Forecasted Consumption
+    fig = px.line()
+
+    # Add Actual Consumption line
+    fig.add_scatter(
+        x=df_actual['Timestamp'],
+        y=df_actual['Actual Consumption (MW)'],
+        mode='lines',
+        name='Actual Consumption (MW)',
+        line=dict(color='#1f77b4')  # Blue line
+    )
+
+    # Add Forecasted Consumption line
+    fig.add_scatter(
+        x=df_consumption['Timestamp'],
+        y=df_consumption['Consumption Forecast (MW)'],
+        mode='lines',
+        name='Consumption Forecast (MW)',
+        line=dict(color='#ff7f0e')  # Orange line
+    )
+
+    # Update layout for clarity
+    fig.update_layout(
+        title="Actual vs Forecasted Consumption Over Time",
+        xaxis_title="Timestamp",
+        yaxis_title="Consumption (MW)",
+        legend_title="Type",
+        template="plotly_dark",
+        hovermode="x unified"
+    )
 
 
     # Split into two columns
@@ -145,3 +280,32 @@ def render_balancing_market_intraday_page():
 
         # Show the plot
         st.plotly_chart(fig_wind_forecast, use_container_width=True)
+
+        # Solar Production Visualizations
+        st.plotly_chart(fig_actual_vs_notified, use_container_width=True)
+        st.subheader("Actual and Forecasted Deviations from Notified Solar Production")
+        fig_deviation = px.line(
+            df_solar, 
+            x='Timestamp', 
+            y=['Deviation_Combined', 'Deviation_Forecast_Line'],
+            labels={'value': 'Deviation (MW)', 'Timestamp': 'Timestamp'},
+            title="Actual and Forecasted Deviations from Notified Solar Production"
+        )
+        # Update line styles
+        fig_deviation.update_traces(selector=dict(name='Deviation_Combined'),
+                                    line=dict(color='skyblue', dash='solid'),
+                                    name="Deviation - Actual Production")
+        fig_deviation.update_traces(selector=dict(name='Deviation_Forecast_Line'),
+                                    line=dict(color='orange', dash='dash'),
+                                    name="Deviation - Forecast")
+
+        st.plotly_chart(fig_deviation, use_container_width=True)
+
+        # Hydro Production Visualizations
+        st.subheader("Hydro Production Monitoring")
+        st.plotly_chart(fig_hydro_actual_forecast, use_container_width=True)
+
+        # Consumption Visualization
+        st.header("Consumption Monitoring")
+        st.write("### Actual vs Forecasted Consumption Over Time")
+        st.plotly_chart(fig, use_container_width=True)
