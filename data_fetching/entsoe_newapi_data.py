@@ -12,6 +12,8 @@ import joblib
 import xlsxwriter
 import matplotlib.pyplot as plt
 import plotly.express as px
+import pytz
+import io
 
 # Load environment variables for ENTSO-E API key
 load_dotenv()
@@ -781,6 +783,18 @@ def fetch_volue_wind_data():
     # INSTANCES curve 15 min
     today = get_issue_date()
     curve = session.get_curve(name='pro ro wnd ec00 mwh/h cet min15 f')
+    # INSTANCES curves contain a timeseries for each defined issue dates
+    # Get a list of available curves with issue dates within a timerange with:
+    # curve.search_instances(issue_date_from='2018-01-01', issue_date_to='2018-01-01')
+    ts_15min = curve.get_instance(issue_date=today)
+    df_wind_15min = ts_15min.to_pandas() # convert TS object to pandas.Series object
+    df_wind_15min = df_wind_15min.to_frame() # convert pandas.Series to pandas.DataFrame
+    return df_wind_15min
+
+def fetch_volue_wind_data_15min():
+    # INSTANCES curve 15 min
+    today = get_issue_date()
+    curve = session.get_curve(name='pro ro wnd intraday lastec mwh/h cet min15 f')
     # INSTANCES curves contain a timeseries for each defined issue dates
     # Get a list of available curves with issue dates within a timerange with:
     # curve.search_instances(issue_date_from='2018-01-01', issue_date_to='2018-01-01')
@@ -1718,41 +1732,49 @@ def combine_consumption_data(df_forecast, df_actual):
 #1.a) RO_BG Physical Flows========================================================================================================
 
 def fetch_physical_flows_bulgaria_to_romania():
+    """Fetch hourly physical energy flows from Bulgaria to Romania with fallback handling."""
+    
+    # Get today's date and CET timezone adjustments
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    start_cet = pd.Timestamp(today.strftime('%Y%m%d') + '0000', tz='Europe/Budapest') + timedelta(hours=-1)
-    end_cet = pd.Timestamp((today + timedelta(days=1)).strftime('%Y%m%d') + '0000', tz='Europe/Budapest')
+    start_cet = pd.Timestamp(today.strftime('%Y%m%d') + '0000', tz='Europe/Berlin') + timedelta(hours=-1)
+    end_cet = pd.Timestamp((today + timedelta(days=1)).strftime('%Y%m%d') + '0000', tz='Europe/Berlin')
 
+    # Convert to ENTSO-E API format
     period_start = start_cet.strftime('%Y%m%d%H%M')
     period_end = end_cet.strftime('%Y%m%d%H%M')
 
+    # API Endpoint
     url = "https://web-api.tp.entsoe.eu/api"
 
+    # API Parameters
     params = {
-        "securityToken": api_key_entsoe,  # Replace with your actual token
+        "securityToken": api_key_entsoe,  # Replace with your actual API token
         "documentType": "A11",  # Aggregated energy data report
-        "out_Domain": "10YCA-BULGARIA-R",  # Bulgaria's EIC code
-        "in_Domain": "10YRO-TEL------P",  # Romania's EIC code
+        "out_Domain": "10YCA-BULGARIA-R",  # Bulgaria EIC code
+        "in_Domain": "10YRO-TEL------P",  # Romania EIC code
         "periodStart": period_start,  # Start period
         "periodEnd": period_end  # End period
     }
 
+    # Request Headers
     headers = {
         "Content-Type": "application/xml",
         "Accept": "application/xml",
     }
 
     try:
+        # ✅ API Request
         response = requests.get(url, params=params, headers=headers)
         response.raise_for_status()
-        
-        # Parse XML response
+
+        # ✅ Parse XML response
         root = ET.fromstring(response.content)
         namespaces = {'ns': root.tag[root.tag.find("{"):root.tag.find("}")+1].strip("{}")}
 
         timestamps_utc = []
         flows = []
 
-        # Extract values from XML
+        # ✅ Extract data from XML
         for timeseries in root.findall('ns:TimeSeries', namespaces):
             for period in timeseries.findall('ns:Period', namespaces):
                 start_time = period.find('ns:timeInterval/ns:start', namespaces)
@@ -1774,25 +1796,31 @@ def fetch_physical_flows_bulgaria_to_romania():
                         position = int(position_tag.text)
                         flow = float(quantity_tag.text)
                     except ValueError as e:
-                        print(f"Error converting position or quantity: {e}, skipping.")
+                        print(f"⚠️ Error converting position or quantity: {e}, skipping.")
                         continue
 
                     point_time_utc = start_time_utc + timedelta(minutes=60 * (position - 1))  # Hourly data
                     timestamps_utc.append(point_time_utc)
                     flows.append(flow)
 
-        # Create hourly DataFrame
+        # ✅ Check if data exists
+        if not timestamps_utc:
+            print("⚠️ No data available for physical flows today. Returning an empty DataFrame.")
+            return pd.DataFrame(columns=["Timestamp", "Physical Flow (MW)"])
+
+        # ✅ Create hourly DataFrame
         df_hourly_flows = pd.DataFrame({
             'Timestamp_UTC': timestamps_utc,
             'Physical Flow (MW)': flows
         })
 
+        # ✅ Convert UTC to CET
         df_hourly_flows['Timestamp_UTC'] = pd.to_datetime(df_hourly_flows['Timestamp_UTC'])
         df_hourly_flows['Timestamp_CET'] = df_hourly_flows['Timestamp_UTC'].dt.tz_localize('UTC').dt.tz_convert('Europe/Berlin')
         df_hourly_flows.drop(columns=['Timestamp_UTC'], inplace=True)
         df_hourly_flows.rename(columns={'Timestamp_CET': 'Timestamp'}, inplace=True)
 
-        # Extrapolate hourly data to quarterly intervals
+        # ✅ Extrapolate hourly data to **quarterly intervals**
         expanded_data = []
         for index, row in df_hourly_flows.iterrows():
             timestamp = row['Timestamp']
@@ -1810,8 +1838,8 @@ def fetch_physical_flows_bulgaria_to_romania():
         return df_quarterly_flows
 
     except requests.exceptions.RequestException as e:
-        print(f"An error occurred: {e}")
-        return pd.DataFrame()
+        print(f"❌ API request failed: {e}")
+        return pd.DataFrame(columns=["Timestamp", "Physical Flow (MW)"])  # Return empty DataFrame on failure
 
 def fetch_physical_flows_romania_to_bulgaria():
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -1907,7 +1935,7 @@ def fetch_physical_flows_romania_to_bulgaria():
 
     except requests.exceptions.RequestException as e:
         print(f"An error occurred: {e}")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["Timestamp", "Physical Flow (MW)"])  # Return empty DataFrame on failure
 
 def concatenate_cross_border_flows(df_bg_to_ro, df_ro_to_bg):
     # Rename columns for clarity before concatenation
@@ -1925,114 +1953,135 @@ def concatenate_cross_border_flows(df_bg_to_ro, df_ro_to_bg):
 #1.b) RO_BG Crossborder Schedule===================================================================================================
 
 eic_Bulgaria = "10YCA-BULGARIA-R"
+def process_entsoe_response(response, start_cet, end_cet):
+    """ Process ENTSO-E XML response and return a DataFrame with scheduled flows. """
+    
+    root = ET.fromstring(response.content)  # Ensure response is correctly passed
+    namespaces = {'ns': root.tag[root.tag.find("{"):root.tag.find("}")+1].strip("{}")}
+
+    timestamps_utc = []
+    flows = []
+
+    for timeseries in root.findall('ns:TimeSeries', namespaces):
+        for period in timeseries.findall('ns:Period', namespaces):
+            start_time = period.find('ns:timeInterval/ns:start', namespaces)
+            resolution = period.find('ns:resolution', namespaces)
+
+            if start_time is None or resolution is None:
+                continue
+
+            start_time_utc = datetime.strptime(start_time.text, '%Y-%m-%dT%H:%MZ')
+
+            position_data = {}  # Store extracted position data
+
+            for point in period.findall('ns:Point', namespaces):
+                position_tag = point.find('ns:position', namespaces)
+                quantity_tag = point.find('ns:quantity', namespaces)
+
+                if position_tag is None or quantity_tag is None:
+                    continue
+
+                try:
+                    position = int(position_tag.text)
+                    flow = float(quantity_tag.text)
+                    position_data[position] = flow  # Store extracted flow data
+                except ValueError as e:
+                    print(f"Error converting position or quantity: {e}, skipping.")
+                    continue
+
+            # Ensure we have a full 24-hour schedule by filling missing positions
+            for position in range(1, 25):  # 1 to 24 positions (1-based index)
+                if position not in position_data:
+                    if position > 1:
+                        # Forward-fill from previous hour
+                        position_data[position] = position_data.get(position - 1, 0)
+                    else:
+                        # Default to 0 for first position if no previous value
+                        position_data[position] = 0
+
+            # Generate timestamps and match extracted data
+            for position, flow in position_data.items():
+                point_time_utc = start_time_utc + timedelta(hours=(position - 1))
+                timestamps_utc.append(point_time_utc)
+                flows.append(flow)
+
+    df_schedule = pd.DataFrame({'Timestamp_UTC': timestamps_utc, 'Scheduled Flow (MW)': flows})
+
+    if df_schedule.empty:
+        print("No data found, returning a dataframe with 0 values.")
+        full_index = pd.date_range(start=start_cet, end=end_cet - timedelta(minutes=15), freq='15T', tz='Europe/Berlin')
+        return pd.DataFrame({'Timestamp': full_index, 'Scheduled Flow (MW)': 0})
+
+    df_schedule['Timestamp_UTC'] = pd.to_datetime(df_schedule['Timestamp_UTC'])
+    df_schedule['Timestamp_CET'] = df_schedule['Timestamp_UTC'].dt.tz_localize('UTC').dt.tz_convert('Europe/Berlin')
+    df_schedule.drop(columns=['Timestamp_UTC'], inplace=True)
+    df_schedule.rename(columns={'Timestamp_CET': 'Timestamp'}, inplace=True)
+
+    # Generate full quarter-hourly timestamps for CET timezone
+    full_index = pd.date_range(start=start_cet, end=end_cet - timedelta(minutes=15), freq='15T', tz='Europe/Berlin')
+    df_schedule = df_schedule.set_index('Timestamp').reindex(full_index).reset_index()
+    df_schedule.rename(columns={'index': 'Timestamp'}, inplace=True)
+
+    df_schedule['Scheduled Flow (MW)'] = df_schedule['Scheduled Flow (MW)'].fillna(method='ffill').fillna(0)
+
+    return df_schedule
+
 def fetch_cross_border_schedule(out_domain, in_domain):
+    """
+    Fetches the cross-border scheduled flow from ENTSO-E API, processes it, and returns a cleaned DataFrame.
+    """
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     start_cet = pd.Timestamp(today.strftime('%Y%m%d') + '0000', tz='Europe/Berlin')
     end_cet = pd.Timestamp((today + timedelta(days=1)).strftime('%Y%m%d') + '0000', tz='Europe/Berlin')
 
-    # Fetch starting from the last UTC hour of the previous day
+    # Convert to UTC for API request
     start_utc = start_cet.tz_convert('UTC') - timedelta(hours=1)
     period_start = start_utc.strftime('%Y%m%d%H%M')
     period_end = end_cet.tz_convert('UTC').strftime('%Y%m%d%H%M')
 
     url = "https://web-api.tp.entsoe.eu/api"
-
     params = {
-        "securityToken": api_key_entsoe,  # Replace with your actual token
-        "documentType": "A09",  # Document type for cross-border schedules
-        "out_Domain": out_domain,  # Outgoing country EIC code
-        "in_Domain": in_domain,   # Incoming country EIC code
-        "periodStart": period_start,  # Start period
-        "periodEnd": period_end,  # End period
+        "securityToken": api_key_entsoe,
+        "documentType": "A09",
+        "out_Domain": out_domain,
+        "in_Domain": in_domain,
+        "periodStart": period_start,
+        "periodEnd": period_end,
         "contract_MarketAgreement.Type": "A05"
     }
-
-    headers = {
-        "Content-Type": "application/xml",
-        "Accept": "application/xml",
-    }
+    headers = {"Content-Type": "application/xml", "Accept": "application/xml"}
 
     try:
         response = requests.get(url, params=params, headers=headers)
         response.raise_for_status()
-        
-        # Parse XML response
-        root = ET.fromstring(response.content)
-        namespaces = {'ns': root.tag[root.tag.find("{"):root.tag.find("}")+1].strip("{}")}
-
-        timestamps_utc = []
-        flows = []
-
-        # Extract values from XML
-        for timeseries in root.findall('ns:TimeSeries', namespaces):
-            for period in timeseries.findall('ns:Period', namespaces):
-                start_time = period.find('ns:timeInterval/ns:start', namespaces)
-                resolution = period.find('ns:resolution', namespaces)
-
-                if start_time is None or resolution is None:
-                    continue
-
-                start_time_utc = datetime.strptime(start_time.text, '%Y-%m-%dT%H:%MZ')
-
-                for point in period.findall('ns:Point', namespaces):
-                    position_tag = point.find('ns:position', namespaces)
-                    quantity_tag = point.find('ns:quantity', namespaces)
-
-                    if position_tag is None or quantity_tag is None:
-                        continue
-
-                    try:
-                        position = int(position_tag.text)
-                        flow = float(quantity_tag.text)
-                    except ValueError as e:
-                        print(f"Error converting position or quantity: {e}, skipping.")
-                        continue
-
-                    point_time_utc = start_time_utc + timedelta(hours=(position - 1))
-                    timestamps_utc.append(point_time_utc)
-                    flows.append(flow)
-
-        # Create hourly DataFrame
-        df_schedule = pd.DataFrame({
-            'Timestamp_UTC': timestamps_utc,
-            'Scheduled Flow (MW)': flows
-        })
-
-        df_schedule['Timestamp_UTC'] = pd.to_datetime(df_schedule['Timestamp_UTC'])
-        df_schedule['Timestamp_CET'] = df_schedule['Timestamp_UTC'].dt.tz_localize('UTC').dt.tz_convert('Europe/Berlin')
-        df_schedule.drop(columns=['Timestamp_UTC'], inplace=True)
-        df_schedule.rename(columns={'Timestamp_CET': 'Timestamp'}, inplace=True)
-
-        # Filter for the current day in CET (00:00 to 23:45)
-        df_schedule = df_schedule[(df_schedule['Timestamp'] >= start_cet) & (df_schedule['Timestamp'] < end_cet)]
-
-        # Extrapolate hourly data to quarterly intervals
-        expanded_data = []
-        for index, row in df_schedule.iterrows():
-            timestamp = row['Timestamp']
-            value = row['Scheduled Flow (MW)']
-
-            for i in range(4):
-                expanded_data.append({
-                    'Timestamp': timestamp + pd.Timedelta(minutes=15 * i),
-                    'Scheduled Flow (MW)': value
-                })
-
-        df_quarterly_schedule = pd.DataFrame(expanded_data)
-
-        # Ensure complete index for intraday
-        full_index = pd.date_range(start=start_cet, end=end_cet - timedelta(minutes=15), freq='15T', tz='Europe/Berlin')
-        df_quarterly_schedule = df_quarterly_schedule.set_index('Timestamp').reindex(full_index).reset_index()
-        df_quarterly_schedule.rename(columns={'index': 'Timestamp'}, inplace=True)
-
-        # Forward-fill and backward-fill missing values
-        df_quarterly_schedule['Scheduled Flow (MW)'] = df_quarterly_schedule['Scheduled Flow (MW)'].fillna(method='ffill').fillna(method='bfill')
-
-        return df_quarterly_schedule
-
+        return process_entsoe_response(response, start_cet, end_cet)
+    
     except requests.exceptions.RequestException as e:
-        print(f"An error occurred: {e}")
-        return pd.DataFrame()
+        print(f"API request failed: {e}")
+        return create_zeroed_crossborder_schedule(start_cet, end_cet)
+
+# Function to create a DataFrame filled with zeros if no data is available
+def create_zeroed_crossborder_schedule(start_cet, end_cet):
+    timestamps = pd.date_range(start=start_cet, end=end_cet - timedelta(minutes=15), freq='15T', tz='Europe/Berlin')
+    return pd.DataFrame({'Timestamp': timestamps, 'Scheduled Flow (MW)': [0] * len(timestamps)})
+
+# Function to convert hourly data to quarter-hourly intervals
+def expand_to_quarterly_intervals(df_schedule, start_cet, end_cet):
+    expanded_data = []
+    for _, row in df_schedule.iterrows():
+        timestamp = row['Timestamp']
+        value = row['Scheduled Flow (MW)']
+        for i in range(4):  # 4 intervals per hour
+            expanded_data.append({'Timestamp': timestamp + pd.Timedelta(minutes=15 * i), 'Scheduled Flow (MW)': value})
+
+    df_quarterly_schedule = pd.DataFrame(expanded_data)
+    full_index = pd.date_range(start=start_cet, end=end_cet - timedelta(minutes=15), freq='15T', tz='Europe/Berlin')
+    df_quarterly_schedule = df_quarterly_schedule.set_index('Timestamp').reindex(full_index).reset_index()
+    df_quarterly_schedule.rename(columns={'index': 'Timestamp'}, inplace=True)
+    df_quarterly_schedule['Scheduled Flow (MW)'] = df_quarterly_schedule['Scheduled Flow (MW)'].fillna(0)
+
+    return df_quarterly_schedule
+
 
 #1.c) Combining the Flows and Schedules into a dataframe=============================================================================
 def combine_physical_and_scheduled_flows_ro_bg(df_cross_border_flows, df_bg_to_ro_schedule, df_ro_to_bg_schedule):
@@ -2145,7 +2194,7 @@ def fetch_physical_flows(out_domain, in_domain):
 
     except requests.exceptions.RequestException as e:
         print(f"An error occurred: {e}")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["Timestamp", "Physical Flow (MW)"])  # Return empty DataFrame on failure
 
 def combine_physical_and_scheduled_flows_ro_rs(df_rs_ro_flow, df_ro_rs_flow, df_rs_ro_schedule, df_ro_rs_schedule):
     # Rename schedule columns for clarity
@@ -2290,7 +2339,7 @@ def fetch_physical_flows_ro_hu(out_domain, in_domain):
 
     except requests.exceptions.RequestException as e:
         print(f"An error occurred: {e}")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["Timestamp", "Physical Flow (MW)"])  # Return empty DataFrame on failure
 
 def fetch_cross_border_schedule_hu_ro():
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -2388,7 +2437,7 @@ def fetch_cross_border_schedule_hu_ro():
 
     except requests.exceptions.RequestException as e:
         print(f"An error occurred: {e}")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["Timestamp", "Scheduled Flow (MW)"])  # Return empty DataFrame on failure
 
 def fetch_cross_border_schedule_quarterly_ro_hu():
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -2486,7 +2535,7 @@ def fetch_cross_border_schedule_quarterly_ro_hu():
 
     except requests.exceptions.RequestException as e:
         print(f"An error occurred: {e}")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["Timestamp", "Scheduled Flow (MW)"])  # Return empty DataFrame on failure
 
 
 def combine_physical_and_scheduled_flows_ro_hu(df_hu_ro_flow, df_ro_hu_flow, df_hu_ro_scheduled, df_ro_hu_scheduled):
@@ -2517,7 +2566,256 @@ eic_Hungary = "10YHU-MAVIR----U"
 # df_ro_hu = combine_physical_and_scheduled_flows_ro_hu(df_hu_ro_flow, df_ro_hu_flow, df_hu_ro_scheduled, df_ro_hu_scheduled)
 # st.dataframe(df_ro_hu)
 
-#6. Storing the devations in a dataframe========================================================================================================
+#6. Crossborder Balancing=================================================================================================================================
+
+def fetch_cross_border_balancing(acquiring_domain, connecting_domain):
+    """ Fetches cross-border balancing energy between two countries from ENTSO-E API """
+
+    # Define period (today CET time)
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    start_cet = pd.Timestamp(today.strftime('%Y%m%d') + '0000', tz='Europe/Berlin')
+    end_cet = pd.Timestamp((today + timedelta(days=1)).strftime('%Y%m%d') + '0000', tz='Europe/Berlin')
+
+    # Convert to UTC
+    start_utc = start_cet.tz_convert('UTC') - timedelta(hours=1)
+    period_start = start_utc.strftime('%Y%m%d%H%M')
+    period_end = end_cet.tz_convert('UTC').strftime('%Y%m%d%H%M')
+
+    url = "https://web-api.tp.entsoe.eu/api"
+
+    params = {
+        "securityToken": api_key_entsoe,
+        "documentType": "A88",  # Cross-border balancing
+        "acquiring_Domain": acquiring_domain,  # Acquiring country
+        "connecting_Domain": connecting_domain,  # Providing country
+        "periodStart": period_start,
+        "periodEnd": period_end,
+    }
+
+    headers = {
+        "Content-Type": "application/xml",
+        "Accept": "application/xml",
+    }
+
+    try:
+        response = requests.get(url, params=params, headers=headers)
+        st.write(response.content)
+        response.raise_for_status()
+        return process_cross_border_balancing_response(response.content, start_cet, end_cet)
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching cross-border balancing data: {e}")
+        return pd.DataFrame(columns=["Timestamp", "Balancing Flow (MW)"])  # Return empty DataFrame on failure
+
+def process_cross_border_balancing_response(response_content, start_cet, end_cet):
+    """ Parses the XML response and processes balancing data into a DataFrame """
+    
+    root = ET.fromstring(response_content)
+    namespaces = {'ns': root.tag[root.tag.find("{"):root.tag.find("}")+1].strip("{}")}
+
+    timestamps_utc = []
+    balancing_flows = []
+
+    for timeseries in root.findall('ns:TimeSeries', namespaces):
+        for period in timeseries.findall('ns:Period', namespaces):
+            start_time = period.find('ns:timeInterval/ns:start', namespaces)
+            resolution = period.find('ns:resolution', namespaces)
+
+            if start_time is None or resolution is None:
+                continue
+
+            start_time_utc = datetime.strptime(start_time.text, '%Y-%m-%dT%H:%MZ')
+
+            for point in period.findall('ns:Point', namespaces):
+                position_tag = point.find('ns:position', namespaces)
+                quantity_tag = point.find('ns:quantity', namespaces)
+
+                if position_tag is None or quantity_tag is None:
+                    continue
+
+                try:
+                    position = int(position_tag.text)
+                    balancing_energy = float(quantity_tag.text)
+                except ValueError:
+                    continue
+
+                point_time_utc = start_time_utc + timedelta(hours=(position - 1))
+                timestamps_utc.append(point_time_utc)
+                balancing_flows.append(balancing_energy)
+
+    df_balancing = pd.DataFrame({
+        'Timestamp_UTC': timestamps_utc,
+        'Balancing Flow (MW)': balancing_flows
+    })
+
+    # Convert to CET
+    df_balancing['Timestamp_UTC'] = pd.to_datetime(df_balancing['Timestamp_UTC'])
+    df_balancing['Timestamp_CET'] = df_balancing['Timestamp_UTC'].dt.tz_localize('UTC').dt.tz_convert('Europe/Berlin')
+    df_balancing.drop(columns=['Timestamp_UTC'], inplace=True)
+    df_balancing.rename(columns={'Timestamp_CET': 'Timestamp'}, inplace=True)
+
+    # Expand hourly data to 15-minute intervals
+    full_index = pd.date_range(start=start_cet, end=end_cet - timedelta(minutes=15), freq='15T', tz='Europe/Berlin')
+    df_balancing = df_balancing.set_index('Timestamp').reindex(full_index).reset_index()
+    df_balancing.rename(columns={'index': 'Timestamp'}, inplace=True)
+
+    df_balancing['Balancing Flow (MW)'] = df_balancing['Balancing Flow (MW)'].fillna(method='ffill').fillna(0)
+
+    return df_balancing
+
+#7. Unintended Deviations==============================================================================================================================
+
+def fetch_unintended_deviation_data():
+    """Fetch estimated unintended deviations for import and export, converting timestamps to CET."""
+
+    # Define timezone for CET (handles DST automatically)
+    cet_timezone = pytz.timezone('Europe/Berlin')
+
+    # Get current date in **CET** and set midnight as start of the day
+    cet_now = datetime.now(cet_timezone)
+    cet_midnight = cet_now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Convert midnight CET to UTC (since API operates in UTC)
+    utc_midnight = cet_midnight.astimezone(pytz.utc)
+
+    # Set API time range: Fetch from **CET midnight (converted to UTC) until now**
+    from_time = utc_midnight.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    to_time = (utc_midnight + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    # API Request
+    url = f"https://newmarkets.transelectrica.ro/usy-durom-publicreportg01/00121002500000000000000000000100/publicReport/estimatedPowerSystemImbalance?timeInterval.from={from_time}&timeInterval.to={to_time}&pageInfo.pageSize=3000"
+
+    response = requests.get(url)
+
+    if response.status_code != 200:
+        print(f"⚠️ Failed to fetch data. Status code: {response.status_code}")
+        return pd.DataFrame()
+
+    # Parse JSON response
+    try:
+        data = response.json()
+        items = data.get("itemList", [])
+
+        print(f"✅ Successfully fetched {len(items)} records.")
+
+        if len(items) == 0:
+            print("⚠️ No data found in itemList.")
+            return pd.DataFrame()
+
+        # Process and convert timestamps
+        rows = []
+        for item in items:
+            try:
+                # Convert timestamps from UTC to CET
+                utc_from = datetime.fromisoformat(item['timeInterval']['from'].replace('Z', '+00:00'))
+                utc_to = datetime.fromisoformat(item['timeInterval']['to'].replace('Z', '+00:00'))
+
+                cet_from = utc_from.astimezone(cet_timezone)
+                cet_to = utc_to.astimezone(cet_timezone)
+
+                # Store in formatted string
+                time_period = f"{cet_from.strftime('%Y-%m-%d %H:%M:%S')} - {cet_to.strftime('%Y-%m-%d %H:%M:%S')}"
+
+                # ✅ Correct field names
+                unintended_import = float(item.get("estimatedUnintendedDeviationINArea", 0) or 0)
+                unintended_export = float(item.get("estimatedUnintendedDeviationOUTArea", 0) or 0)
+
+                # Debugging - Print all added records
+                print(f"ADDING: {time_period} | IN: {unintended_import}, OUT: {unintended_export}")
+
+                # Store processed row
+                rows.append([cet_from, unintended_import, unintended_export])
+
+            except Exception as e:
+                print(f"❌ Error processing record: {e}")
+
+        # Convert to DataFrame
+        df_unintended_deviation = pd.DataFrame(rows, columns=['Timestamp', 'Unintended_Import (MW)', 'Unintended_Export (MW)'])
+
+        # Ensure Timestamp is properly formatted in CET
+        df_unintended_deviation['Timestamp'] = pd.to_datetime(df_unintended_deviation['Timestamp']).dt.tz_localize(None)
+
+        return df_unintended_deviation
+
+    except Exception as e:
+        print(f"❌ JSON Parsing Error: {e}")
+        return pd.DataFrame()
+
+#8. Outages=================================================================================================================================================
+
+#9. aFRR and mFRR Activation================================================================================================================================
+
+def fetch_intraday_balancing_activations():
+    """Fetch real-time activated balancing energy data (aFRR & mFRR) from Transelectrica API for today in CET."""
+
+    # Define CET timezone
+    cet_timezone = pytz.timezone("Europe/Berlin")
+
+    # Get current time in CET and set midnight as start of the day
+    cet_now = datetime.now(cet_timezone)
+    cet_midnight = cet_now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Convert CET midnight to UTC (Transelectrica API operates in UTC)
+    utc_midnight = cet_midnight.astimezone(pytz.utc)
+    utc_now = cet_now.astimezone(pytz.utc)
+
+    # Set API time range: Fetch from **CET midnight (converted to UTC) until now**
+    from_time = utc_midnight.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    to_time = utc_now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    # ✅ API Request (Transelectrica)
+    url = f"https://newmarkets.transelectrica.ro/usy-durom-publicreportg01/00121002500000000000000000000100/publicReport/activatedBalancingEnergyOverview?timeInterval.from={from_time}&timeInterval.to={to_time}&pageInfo.pageSize=3000"
+    
+    response = requests.get(url)
+
+    # ✅ Check response status
+    if response.status_code != 200:
+        print(f"❌ Failed to fetch data. Status code: {response.status_code}")
+        return pd.DataFrame()
+
+    # ✅ Parse JSON response
+    data = response.json()
+    items = data.get("itemList", [])
+
+    print(f"✅ Successfully fetched {len(items)} records from API.")
+
+    # ✅ Process and convert timestamps
+    rows = []
+    for item in items:
+        try:
+            # Convert timestamps from UTC to CET
+            utc_from = datetime.fromisoformat(item['timeInterval']['from'].replace('Z', '+00:00'))
+            utc_to = datetime.fromisoformat(item['timeInterval']['to'].replace('Z', '+00:00'))
+
+            cet_from = utc_from.astimezone(cet_timezone)
+            cet_to = utc_to.astimezone(cet_timezone)
+
+            # ✅ Store in formatted string
+            time_period = f"{cet_from.strftime('%Y-%m-%d %H:%M:%S')} - {cet_to.strftime('%Y-%m-%d %H:%M:%S')}"
+            
+            # ✅ Extract energy values (default to 0 if missing)
+            afrr_up = item.get("aFRR_Up", 0) or 0
+            afrr_down = item.get("aFRR_Down", 0) or 0
+            mfrr_up = item.get("mFRR_Up", 0) or 0
+            mfrr_down = item.get("mFRR_Down", 0) or 0
+
+            print(f"ADDING: {time_period} | aFRR_Up: {afrr_up}, aFRR_Down: {afrr_down}, mFRR_Up: {mfrr_up}, mFRR_Down: {mfrr_down}")
+
+            # ✅ Store processed row
+            rows.append([time_period, afrr_up, afrr_down, mfrr_up, mfrr_down])
+
+        except Exception as e:
+            print(f"❌ Error processing record: {e}")
+
+    # ✅ Convert to DataFrame
+    df = pd.DataFrame(rows, columns=["Time Period (CET)", "aFRR Up (MW)", "aFRR Down (MW)", "mFRR Up (MW)", "mFRR Down (MW)"])
+    
+    print("📊 Processed DataFrame:")
+    print(df.head())
+
+    return df
+
+#10. Storing the devations in a dataframe========================================================================================================
 
 # Creating the deviations dataframe
 # Sample setup for timestamps (replace with actual range from your data)
@@ -2559,7 +2857,7 @@ eic_Hungary = "10YHU-MAVIR----U"
 # Wind Analysis================================================================================
 # df_wind_notified = fetch_process_wind_notified()
 # df_wind_actual = fetch_process_wind_actual_production()
-# df_wind_volue = preprocess_volue_forecast(fetch_volue_wind_data())
+# df_wind_volue = preprocess_volue_forecast(fetch_volue_wind_data_15min())
 # df_wind = combine_wind_production_data(df_wind_notified, df_wind_actual, df_wind_volue)
 
 # fetching_Cogealac_data_15min()
@@ -2851,43 +3149,116 @@ eic_Hungary = "10YHU-MAVIR----U"
 # Cross Border Analysis=========================================================================================
 
 # RO_BG
-df_physical_flow_bg_ro = fetch_physical_flows_bulgaria_to_romania()
-df_physical_flow_ro_bg = fetch_physical_flows_romania_to_bulgaria()
-df_physical_flows_ro_bg = concatenate_cross_border_flows(df_physical_flow_bg_ro, df_physical_flow_ro_bg)
-df_scheduled_flow_ro_bg = fetch_cross_border_schedule(eic_Romania, eic_Bulgaria)
-df_scheduled_flow_bg_ro = fetch_cross_border_schedule(eic_Bulgaria, eic_Romania)
-df_ro_bg = combine_physical_and_scheduled_flows_ro_bg(df_physical_flows_ro_bg, df_scheduled_flow_bg_ro, df_scheduled_flow_ro_bg)
+# df_physical_flow_bg_ro = fetch_physical_flows_bulgaria_to_romania()
+# df_physical_flow_ro_bg = fetch_physical_flows_romania_to_bulgaria()
+# df_physical_flows_ro_bg = concatenate_cross_border_flows(df_physical_flow_bg_ro, df_physical_flow_ro_bg)
+# df_scheduled_flow_ro_bg = fetch_cross_border_schedule(eic_Romania, eic_Bulgaria)
+# df_scheduled_flow_bg_ro = fetch_cross_border_schedule(eic_Bulgaria, eic_Romania)
+# df_ro_bg = combine_physical_and_scheduled_flows_ro_bg(df_physical_flows_ro_bg, df_scheduled_flow_bg_ro, df_scheduled_flow_ro_bg)
 
 
-def calculate_excedent_deficit(df, excedent, deficit):
-    df['Net Scheduled Flow (MW)'] = df['RO → BG Scheduled Flow (MW)'] - df['BG → RO Scheduled Flow (MW)']
-    df['Net Physical Flow (MW)'] = df['RO → BG Flow (MW)'] - df['BG → RO Flow (MW)']
+# def calculate_excedent_deficit(df, excedent, deficit):
+#     df['Net Scheduled Flow (MW)'] = df['RO → BG Scheduled Flow (MW)'] - df['BG → RO Scheduled Flow (MW)']
+#     df['Net Physical Flow (MW)'] = df['RO → BG Flow (MW)'] - df['BG → RO Flow (MW)']
     
-    # Initialize deficit and excedent
-    df[excedent] = 0
-    df[deficit] = 0
+#     # Initialize deficit and excedent
+#     df[excedent] = 0
+#     df[deficit] = 0
 
-    # Excedent: Net Physical Flow < Net Scheduled Flow
-    df.loc[df['Net Physical Flow (MW)'] < df['Net Scheduled Flow (MW)'], excedent] = \
-        df['Net Scheduled Flow (MW)'] - df['Net Physical Flow (MW)']
+#     # Excedent: Net Physical Flow < Net Scheduled Flow
+#     df.loc[df['Net Physical Flow (MW)'] < df['Net Scheduled Flow (MW)'], excedent] = \
+#         df['Net Scheduled Flow (MW)'] - df['Net Physical Flow (MW)']
 
-    # Deficit: Net Physical Flow > Net Scheduled Flow
-    df.loc[df['Net Physical Flow (MW)'] > df['Net Scheduled Flow (MW)'], deficit] = \
-        df['Net Physical Flow (MW)'] - df['Net Scheduled Flow (MW)']
+#     # Deficit: Net Physical Flow > Net Scheduled Flow
+#     df.loc[df['Net Physical Flow (MW)'] > df['Net Scheduled Flow (MW)'], deficit] = \
+#         df['Net Physical Flow (MW)'] - df['Net Scheduled Flow (MW)']
 
-    return df
+#     return df
 
-# Apply the logic to your dataframe
-df_ro_bg = calculate_excedent_deficit(df_ro_bg, "Excedent_RO_BG (MW)", "Deficit_RO_BG (MW)")
+# # Apply the logic to your dataframe
+# df_ro_bg = calculate_excedent_deficit(df_ro_bg, "Excedent_RO_BG (MW)", "Deficit_RO_BG (MW)")
+
+# st.dataframe(df_ro_bg)
+
+# # RO_RS
+# # df_physical_flow_ro_rs = fetch_physical_flows(eic_Romania, eic_Serbia)
+# # df_physical_flow_rs_ro = fetch_physical_flows(eic_Serbia, eic_Romania)
+# # df_crossborder_flow_ro_rs = fetch_cross_border_schedule(eic_Romania, eic_Serbia)
+# # df_crossborder_flow_rs_ro = fetch_cross_border_schedule(eic_Serbia, eic_Romania)
+# # df_ro_rs = combine_physical_and_scheduled_flows_ro_rs(df_physical_flow_rs_ro, df_physical_flow_ro_rs, df_crossborder_flow_rs_ro, df_crossborder_flow_ro_rs)
+
+# # st.dataframe(df_ro_rs)
+
+# # RO_UA
+# eic_Ukraine = "10Y1001C--000182"
+# # df_physical_flow_ro_ua = fetch_physical_flows(eic_Romania, eic_Ukraine)
+# # df_physical_flow_ua_ro = fetch_physical_flows(eic_Ukraine, eic_Romania)
+# # df_crossborder_flow_ro_ua = fetch_cross_border_schedule(eic_Romania, eic_Ukraine)
+# # df_crossborder_flow_ua_ro = fetch_cross_border_schedule(eic_Ukraine, eic_Romania)
+# # # df_ro_rs = combine_physical_and_scheduled_flows_ro_rs(df_physical_flow_rs_ro, df_physical_flow_ro_rs, df_crossborder_flow_rs_ro, df_crossborder_flow_ro_rs)
+# # st.write(df_crossborder_flow_ua_ro)
+# # st.write(df_crossborder_flow_ro_ua)
+
+# # df_wind_intraday = fetch_volue_wind_data_15min()
+# # st.write(df_wind_intraday)
+
+# # Analysing the crossbortder balancing===================================
+# # Romania-Hungary Balancing
+# # df_balancing_ro_hu = fetch_cross_border_balancing(eic_Hungary, eic_Romania)
+
+# # Unintended Deviatiions===================================================
+
+# df_unintended_deviation = fetch_unintended_deviation_data()
+# st.dataframe(df_unintended_deviation)
+# import plotly.graph_objects as go
+
+# # Load the dataset
+# df_unintended = df_unintended_deviation.copy()
+
+# # Convert timestamp column to datetime
+# df_unintended['Timestamp'] = pd.to_datetime(df_unintended['Timestamp'])
+
+# # Create the figure
+# fig = go.Figure()
+
+# # Add Unintended Import (solid line)
+# fig.add_trace(go.Scatter(
+#     x=df_unintended['Timestamp'], 
+#     y=df_unintended['Unintended_Import (MW)'], 
+#     mode='lines', 
+#     name="Unintended Import",
+#     line=dict(color="green", width=2)
+# ))
+
+# # Add Unintended Export (solid line)
+# fig.add_trace(go.Scatter(
+#     x=df_unintended['Timestamp'], 
+#     y=df_unintended['Unintended_Export (MW)'], 
+#     mode='lines', 
+#     name="Unintended Export",
+#     line=dict(color="red", width=2)
+# ))
+
+# # Update layout for professional look
+# fig.update_layout(
+#     title="<b>Unintended Energy Flows Monitoring</b>",
+#     xaxis_title="Timestamp",
+#     yaxis_title="Power Flow (MW)",
+#     legend_title="Flow Type",
+#     template="plotly_dark",
+#     hovermode="x unified",
+#     font=dict(family="Arial", size=14),
+#     margin=dict(l=40, r=40, t=60, b=40),
+# )
+
+# # Show the figure in Streamlit
+# st.plotly_chart(fig, use_container_width=True)
+
+# # Outages================================================================================
 
 
-st.dataframe(df_ro_bg)
-
-# RO_RS
-# df_physical_flow_ro_rs = fetch_physical_flows(eic_Romania, eic_Serbia)
-# df_physical_flow_rs_ro = fetch_physical_flows(eic_Serbia, eic_Romania)
-# df_crossborder_flow_ro_rs = fetch_cross_border_schedule(eic_Romania, eic_Serbia)
-# df_crossborder_flow_rs_ro = fetch_cross_border_schedule(eic_Serbia, eic_Romania)
-# df_ro_rs = combine_physical_and_scheduled_flows_ro_rs(df_physical_flow_rs_ro, df_physical_flow_ro_rs, df_crossborder_flow_rs_ro, df_crossborder_flow_ro_rs)
-
-# st.dataframe(df_ro_rs)
+# # aFRR and mFRR activation================================================================
+# # Fetch Data
+# # ✅ Run function and display output
+# df_balancing_activations = fetch_intraday_balancing_activations()
+# st.dataframe(df_balancing_activations)

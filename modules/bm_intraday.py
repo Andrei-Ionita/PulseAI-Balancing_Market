@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from entsoe import EntsoePandasClient
 import os
@@ -9,13 +10,16 @@ from dotenv import load_dotenv
 from data_fetching.entsoe_data import fetch_intraday_imbalance_data  # Importing the function to fetch data
 from data_fetching.entsoe_data import wind_solar_generation, actual_generation_source       # Assuming this function is also available
 # Importing the wind data
-from data_fetching.entsoe_newapi_data import fetch_process_wind_notified, fetch_process_wind_actual_production, preprocess_volue_forecast, fetch_volue_wind_data, combine_wind_production_data, fetching_Cogealac_data_15min, predicting_wind_production_15min, add_solcast_forecast_to_wind_dataframe
+from data_fetching.entsoe_newapi_data import fetch_process_wind_notified, fetch_process_wind_actual_production, preprocess_volue_forecast, fetch_volue_wind_data, fetch_volue_wind_data_15min, combine_wind_production_data, fetching_Cogealac_data_15min, predicting_wind_production_15min, add_solcast_forecast_to_wind_dataframe
 # Importing the solar data
 from data_fetching.entsoe_newapi_data import fetch_process_solar_notified, fetch_process_solar_actual_production, fetch_volue_solar_data, combine_solar_production_data
 # Importing the hydro data
 from data_fetching.entsoe_newapi_data import fetch_process_hydro_water_reservoir_actual_production, fetch_process_hydro_river_actual_production, fetch_volue_hydro_data, align_and_combine_hydro_data
 # Importing consumption data
 from data_fetching.entsoe_newapi_data import fetch_consumption_forecast, fetch_actual_consumption, combine_consumption_data
+# Importing the unintended deviations data
+from data_fetching.entsoe_newapi_data import fetch_unintended_deviation_data
+
 
 #============================================================================Rendering the Intraday Balancing Market Page================================================================
 
@@ -69,7 +73,7 @@ def render_balancing_market_intraday_page():
     # Fetch notified and actual wind production and create the combined dataframe
     df_wind_notified = fetch_process_wind_notified()
     df_wind_actual = fetch_process_wind_actual_production()
-    df_wind_volue = preprocess_volue_forecast(fetch_volue_wind_data())
+    df_wind_volue = preprocess_volue_forecast(fetch_volue_wind_data_15min())
     df_wind = combine_wind_production_data(df_wind_notified, df_wind_actual, df_wind_volue)
 
     fetching_Cogealac_data_15min()
@@ -81,7 +85,7 @@ def render_balancing_market_intraday_page():
 
     # Add columns to indicate when forecasts should be used
     df_wind['Volue Forecast (Filtered)'] = df_wind['Volue Forecast (MW)'].where(df_wind['Actual Production (MW)'].isna())
-    df_wind['Solcast Forecast (Filtered)'] = df_wind['Solcast Forecast (MW)'].where(df_wind['Actual Production (MW)'].isna())
+    # df_wind['Solcast Forecast (Filtered)'] = df_wind['Solcast Forecast (MW)'].where(df_wind['Actual Production (MW)'].isna())
 
     # Create a long-format DataFrame for Plotly
     df_wind_long = df_wind.melt(
@@ -89,8 +93,8 @@ def render_balancing_market_intraday_page():
         value_vars=[
             'Actual Production (MW)',
             'Notified Production (MW)',
-            'Volue Forecast (Filtered)',
-            'Solcast Forecast (Filtered)'
+            'Volue Forecast (Filtered)'
+            # 'Solcast Forecast (Filtered)'
         ],
         var_name='Type',
         value_name='Production (MW)'
@@ -124,11 +128,8 @@ def render_balancing_market_intraday_page():
         np.nan
     )
 
-    # Step 4: Visualization for Actual vs Notified Solar Production
-    st.title("Solar Production Monitoring")
-
+    # Step 4: Visualization for Actual vs Notified Solar Productio
     # Plot 1: Actual vs Notified Solar Production Over Time
-    st.subheader("Actual vs Notified Solar Production Over Time")
     fig_actual_vs_notified = px.line(
         df_solar, 
         x='Timestamp', 
@@ -171,9 +172,6 @@ def render_balancing_market_intraday_page():
     }
 
     # Visualization: Hydro Actual vs Forecast
-    st.header("Hydro Production Monitoring")
-    st.subheader("Actual vs Forecasted Hydro Production")
-
     fig_hydro_actual_forecast = px.line(
         df_hydro_long, 
         x='Timestamp', 
@@ -228,7 +226,44 @@ def render_balancing_market_intraday_page():
         hovermode="x unified"
     )
 
+    # Processing the unintended deviations data
+    df_unintended = fetch_unintended_deviation_data()
+    # Convert timestamp column to datetime
+    df_unintended['Timestamp'] = pd.to_datetime(df_unintended['Timestamp'])
 
+    # Create the figure
+    fig_unintended = go.Figure()
+
+    # Add Unintended Import (solid line)
+    fig_unintended .add_trace(go.Scatter(
+        x=df_unintended['Timestamp'], 
+        y=df_unintended['Unintended_Import (MW)'], 
+        mode='lines', 
+        name="Unintended Import",
+        line=dict(color="green", width=2)
+    ))
+
+    # Add Unintended Export (solid line)
+    fig_unintended.add_trace(go.Scatter(
+        x=df_unintended['Timestamp'], 
+        y=df_unintended['Unintended_Export (MW)'], 
+        mode='lines', 
+        name="Unintended Export",
+        line=dict(color="red", width=2)
+    ))
+
+    # Update layout for professional look
+    fig_unintended.update_layout(
+        title="<b>Unintended Energy Flows Monitoring</b>",
+        xaxis_title="Timestamp",
+        yaxis_title="Power Flow (MW)",
+        legend_title="Flow Type",
+        template="plotly_dark",
+        hovermode="x unified",
+        font=dict(family="Arial", size=14),
+        margin=dict(l=40, r=40, t=60, b=40),
+    )
+    
     # Split into two columns
     col1, col2 = st.columns(2)
 
@@ -309,3 +344,8 @@ def render_balancing_market_intraday_page():
         st.header("Consumption Monitoring")
         st.write("### Actual vs Forecasted Consumption Over Time")
         st.plotly_chart(fig, use_container_width=True)
+
+        # Unintended Deviations Visualization
+        st.header("Unintended Deviations Monitoring")
+        st.plotly_chart(fig_unintended , use_container_width=True)
+
