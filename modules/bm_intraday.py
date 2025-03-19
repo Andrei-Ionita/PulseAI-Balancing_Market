@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 from entsoe import EntsoePandasClient
 import os
 from dotenv import load_dotenv
+import asyncio
+
 from data_fetching.entsoe_data import fetch_intraday_imbalance_data  # Importing the function to fetch data
 from data_fetching.entsoe_data import wind_solar_generation, actual_generation_source       # Assuming this function is also available
 # Importing the wind data
@@ -24,10 +26,6 @@ from data_fetching.entsoe_newapi_data import fetch_unintended_deviation_data
 #============================================================================Rendering the Intraday Balancing Market Page================================================================
 
 def render_balancing_market_intraday_page():
-    st.title("Intraday Balancing Market Dashboard")
-    st.write("This dashboard provides a comprehensive overview of intraday balancing, "
-             "allowing traders to quickly analyze both the current market conditions and the influencing factors.")
-
     # CSS code to collapse the sidebar
     collapse_sidebar_css = """
         <style>
@@ -348,4 +346,9 @@ def render_balancing_market_intraday_page():
         # Unintended Deviations Visualization
         st.header("Unintended Deviations Monitoring")
         st.plotly_chart(fig_unintended , use_container_width=True)
+
+async def refresh_app():
+    while True:
+        await asyncio.sleep(300)  # Wait for 5 minutes
+        st.rerun()
 
