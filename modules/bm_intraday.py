@@ -349,6 +349,6 @@ def render_balancing_market_intraday_page():
 
 async def refresh_app():
     while True:
-        await asyncio.sleep(60)  # Wait for 1 minute
+        await asyncio.sleep(300)  # Wait for 5 minutes
         st.rerun()
 
