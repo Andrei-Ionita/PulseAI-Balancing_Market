@@ -753,30 +753,36 @@ def fetch_process_wind_actual_production():
         return pd.DataFrame()
 
 def combine_wind_production_data(df_notified, df_actual, df_forecast):
-    # Step 1: Sort and align the wind notified and actual production DataFrames
-    df_notified = df_notified.sort_values(by='Timestamp').set_index('Timestamp')
-    df_actual = df_actual.sort_values(by='Timestamp').set_index('Timestamp')
+    # Ensure all DataFrames have Timestamp as a column, not index
+    if isinstance(df_notified.index, pd.DatetimeIndex) and df_notified.index.name == 'Timestamp':
+        df_notified = df_notified.reset_index()
+    if isinstance(df_actual.index, pd.DatetimeIndex) and df_actual.index.name == 'Timestamp':
+        df_actual = df_actual.reset_index()
+    if isinstance(df_forecast.index, pd.DatetimeIndex) and df_forecast.index.name == 'Timestamp':
+        df_forecast = df_forecast.reset_index()
+
+    # Sort DataFrames by Timestamp
+    df_notified = df_notified.sort_values('Timestamp')
+    df_actual = df_actual.sort_values('Timestamp')
+    df_forecast = df_forecast.sort_values('Timestamp')
+
+    # Set Timestamp as index for merging
+    df_notified.set_index('Timestamp', inplace=True)
+    df_actual.set_index('Timestamp', inplace=True)
+    df_forecast.set_index('Timestamp', inplace=True)
     
-    # Step 2: Concatenate the notified and actual data based on Timestamp
+    # Concatenate the notified and actual data based on Timestamp
     df_combined = pd.concat([df_notified, df_actual], axis=1)
-
-    # Step 3: Reset index to make Timestamp a column again
+    
+    # Add the volue forecast
+    df_combined['Volue Forecast (MW)'] = df_forecast['Volue Forecast (MW)']
+    
+    # Reset index to make Timestamp a column again
     df_combined.reset_index(inplace=True)
     
-    # Step 4: Rename the columns for better readability
-    df_combined.columns = ['Timestamp', 'Notified Production (MW)', 'Actual Production (MW)']
-
-    # Step 5: Add the volue forecast to the combined dataframe by aligning timestamps
-    df_forecast = df_forecast.sort_values(by='Timestamp').set_index('Timestamp')
-
-    # Aligning the forecast data based on the timestamps in the combined dataframe
-    df_combined = df_combined.set_index('Timestamp')
-    df_combined['Volue Forecast (MW)'] = df_forecast['Volue Forecast (MW)']
-    df_combined.reset_index(inplace=True)
-
-    # Step 6: Fill any missing values if required (e.g., with 0 or 'NaN')
-    df_combined.fillna(method='ffill', inplace=True)  # Forward fill any missing values if necessary
-
+    # Fill any missing values
+    df_combined.fillna(method='ffill', inplace=True)
+    
     return df_combined
 
 def fetch_volue_wind_data():
@@ -795,36 +801,50 @@ def fetch_volue_wind_data_15min():
     # INSTANCES curve 15 min
     today = get_issue_date()
     curve = session.get_curve(name='pro ro wnd intraday lastec mwh/h cet min15 f')
-    # INSTANCES curves contain a timeseries for each defined issue dates
-    # Get a list of available curves with issue dates within a timerange with:
-    # curve.search_instances(issue_date_from='2018-01-01', issue_date_to='2018-01-01')
-    ts_15min = curve.get_instance(issue_date=today)
-    if ts_15min is not None:
-        df_wind_15min = ts_15min.to_pandas() # convert TS object to pandas.Series object
-        df_wind_15min = df_wind_15min.to_frame() # convert pandas.Series to pandas.DataFrame
-    else:
-        ts_15min = curve.get_instance(issue_date=today - timedelta(days=1))
-        df_wind_15min = ts_15min.to_pandas() # convert TS object to pandas.Series object
-        df_wind_15min = df_wind_15min.to_frame() # convert pandas.Series to pandas.DataFrame
+    try:
+        ts_15min = curve.get_instance(issue_date=today)
+        if ts_15min is not None:
+            df_wind_15min = ts_15min.to_pandas()  # convert TS object to pandas.Series object
+            df_wind_15min = df_wind_15min.to_frame()  # convert pandas.Series to pandas.DataFrame
+        else:
+            ts_15min = curve.get_instance(issue_date=today - timedelta(days=1))
+            df_wind_15min = ts_15min.to_pandas()  # convert TS object to pandas.Series object
+            df_wind_15min = df_wind_15min.to_frame()  # convert pandas.Series to pandas.DataFrame
+        
+        # Ensure index is datetime
+        df_wind_15min.index = pd.to_datetime(df_wind_15min.index)
+        df_wind_15min.index.name = 'Timestamp'
+        
+        # Rename the value column
+        df_wind_15min.columns = ['Volue Forecast (MW)']
+        
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        # Create empty DataFrame with correct structure
+        df_wind_15min = pd.DataFrame(columns=['Volue Forecast (MW)'])
+        df_wind_15min.index.name = 'Timestamp'
+    
     return df_wind_15min
 
 # Adjusting the Volue forecast DataFrame
 def preprocess_volue_forecast(df_forecast):
-    # Assuming the forecast dataframe is using the index as the timestamp
-    # Reset the index to make it a proper column
-    df_forecast.reset_index(inplace=True)
-
-    # Rename the index column to 'Timestamp' for consistency with other dataframes
-    df_forecast.rename(columns={'index': 'Timestamp'}, inplace=True)
-    # Step 5: Rename the forecast column to match our desired name
-    df_forecast.rename(columns={df_forecast.columns[-1]: 'Volue Forecast (MW)'}, inplace=True)
-
-    # Sort by timestamp to align with the other dataframes
-    df_forecast = df_forecast.sort_values(by='Timestamp')
-
-    # Shift all timestamps forward by 1 hour
-    df_forecast['Timestamp'] = pd.to_datetime(df_forecast['Timestamp'])
-
+    if df_forecast.empty:
+        return pd.DataFrame({'Timestamp': [], 'Volue Forecast (MW)': []})
+    
+    # Ensure index is datetime
+    if not isinstance(df_forecast.index, pd.DatetimeIndex):
+        df_forecast.index = pd.to_datetime(df_forecast.index)
+    
+    # Ensure column is named correctly
+    if df_forecast.columns[0] != 'Volue Forecast (MW)':
+        df_forecast.columns = ['Volue Forecast (MW)']
+    
+    # Reset index to make Timestamp a column
+    df_forecast = df_forecast.reset_index()
+    
+    # Sort by timestamp
+    df_forecast = df_forecast.sort_values('Timestamp')
+    
     return df_forecast
 
 # Solcast Forecast======================================
@@ -1202,55 +1222,82 @@ def fetch_process_solar_actual_production():
         return pd.DataFrame()
 
 def fetch_volue_solar_data_15min():
+    # INSTANCES curve 15 min
     today = get_issue_date()
-    # INSTANCE curve 15 min
     curve = session.get_curve(name='pro ro spv intraday lastec mwh/h cet min15 f')
-    # INSTANCES curves contain a timeseries for each defined issue dates
-    # Get a list of available curves with issue dates within a timerange with:
-    # curve.search_instances(issue_date_from='2018-01-01', issue_date_to='2018-01-01')
-    ts_15min = curve.get_instance(issue_date=today)
-    pd_s_15min = ts_15min.to_pandas() # convert TS object to pandas.Series object
-    df_solar_15min = pd_s_15min.to_frame() # convert pandas.Series to pandas.DataFrame
+    try:
+        ts_15min = curve.get_instance(issue_date=today)
+        if ts_15min is not None:
+            df_solar_15min = ts_15min.to_pandas()  # convert TS object to pandas.Series object
+            df_solar_15min = df_solar_15min.to_frame()  # convert pandas.Series to pandas.DataFrame
+        else:
+            ts_15min = curve.get_instance(issue_date=today - timedelta(days=1))
+            df_solar_15min = ts_15min.to_pandas()  # convert TS object to pandas.Series object
+            df_solar_15min = df_solar_15min.to_frame()  # convert pandas.Series to pandas.DataFrame
+        
+        # Ensure index is datetime
+        df_solar_15min.index = pd.to_datetime(df_solar_15min.index)
+        df_solar_15min.index.name = 'Timestamp'
+        
+        # Rename the value column
+        df_solar_15min.columns = ['Volue Forecast (MW)']
+        
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        # Create empty DataFrame with correct structure
+        df_solar_15min = pd.DataFrame(columns=['Volue Forecast (MW)'])
+        df_solar_15min.index.name = 'Timestamp'
+    
     return df_solar_15min
 
-def fetch_volue_solar_data():
-    today = get_issue_date()
-    # INSTANCE curve 15 min
-    curve = session.get_curve(name='pro ro spv ec00 mwh/h cet min15 f')
-    # INSTANCES curves contain a timeseries for each defined issue dates
-    # Get a list of available curves with issue dates within a timerange with:
-    # curve.search_instances(issue_date_from='2018-01-01', issue_date_to='2018-01-01')
-    ts_15min = curve.get_instance(issue_date=today)
-    pd_s_15min = ts_15min.to_pandas() # convert TS object to pandas.Series object
-    df_solar_15min = pd_s_15min.to_frame() # convert pandas.Series to pandas.DataFrame
-    return df_solar_15min
+# def fetch_volue_solar_data():
+#     today = get_issue_date()
+#     # INSTANCE curve 15 min
+#     curve = session.get_curve(name='pro ro spv ec00 mwh/h cet min15 f')
+#     # INSTANCES curves contain a timeseries for each defined issue dates
+#     # Get a list of available curves with issue dates within a timerange with:
+#     # curve.search_instances(issue_date_from='2018-01-01', issue_date_to='2018-01-01')
+#     ts_15min = curve.get_instance(issue_date=today)
+#     pd_s_15min = ts_15min.to_pandas() # convert TS object to pandas.Series object
+#     df_solar_15min = pd_s_15min.to_frame() # convert pandas.Series to pandas.DataFrame
+#     return df_solar_15min
 
 def combine_solar_production_data(df_notified, df_actual, df_forecast):
-    # Step 1: Sort and align the wind notified and actual production DataFrames
-    df_notified = df_notified.sort_values(by='Timestamp').set_index('Timestamp')
-    df_actual = df_actual.sort_values(by='Timestamp').set_index('Timestamp')
-    
-    # Step 2: Concatenate the notified and actual data based on Timestamp
-    df_combined = pd.concat([df_notified, df_actual], axis=1)
-
-    # Step 3: Reset index to make Timestamp a column again
-    df_combined.reset_index(inplace=True)
-    
-    # Step 4: Rename the columns for better readability
-    df_combined.columns = ['Timestamp', 'Notified Production (MW)', 'Actual Production (MW)']
-
-    # Step 5: Add the volue forecast to the combined dataframe by aligning timestamps
-    df_forecast = df_forecast.sort_values(by='Timestamp').set_index('Timestamp')
-
-    # Aligning the forecast data based on the timestamps in the combined dataframe
-    df_combined = df_combined.set_index('Timestamp')
-    df_combined['Volue Forecast (MW)'] = df_forecast['Volue Forecast (MW)']
-    df_combined.reset_index(inplace=True)
-
-    # Step 6: Fill any missing values if required (e.g., with 0 or 'NaN')
-    df_combined.fillna(method='ffill', inplace=True)  # Forward fill any missing values if necessary
-
-    return df_combined
+    try:
+        # Ensure all DataFrames have Timestamp as a column, not index
+        if 'Timestamp' not in df_notified.columns or 'Timestamp' not in df_actual.columns:
+            print("Missing Timestamp column in input DataFrames")
+            return pd.DataFrame({'Timestamp': [], 'Notified Production (MW)': [], 'Actual Production (MW)': [], 'Volue Forecast (MW)': []})
+        
+        # Sort all DataFrames by Timestamp
+        df_notified = df_notified.sort_values('Timestamp')
+        df_actual = df_actual.sort_values('Timestamp')
+        
+        # Merge notified and actual data based on Timestamp
+        df_combined = pd.merge(df_notified, df_actual, on='Timestamp', how='outer')
+        
+        # If forecast data is available and has the correct column, merge it
+        if not df_forecast.empty and 'Volue Forecast (MW)' in df_forecast.columns:
+            df_forecast = df_forecast.sort_values('Timestamp')
+            df_combined = pd.merge(df_combined, df_forecast[['Timestamp', 'Volue Forecast (MW)']], on='Timestamp', how='outer')
+        else:
+            # Add empty forecast column if not available
+            df_combined['Volue Forecast (MW)'] = np.nan
+        
+        # Sort the final DataFrame by Timestamp
+        df_combined = df_combined.sort_values('Timestamp')
+        
+        # Fill missing values using forward fill
+        df_combined = df_combined.fillna(method='ffill')
+        
+        # Fill any remaining NaN values with 0
+        df_combined = df_combined.fillna(0)
+        
+        return df_combined
+        
+    except Exception as e:
+        print(f"An error occurred while combining solar production data: {e}")
+        return pd.DataFrame()
 
 #==========================================================================Hydro Production==============================================================================
 
@@ -1489,17 +1536,24 @@ def fetch_process_hydro_river_actual_production():
         return pd.DataFrame()
 
 def fetch_volue_hydro_data():
-    today = get_issue_date()
-    # INSTANCE curve hour
-    curve = session.get_curve(name='pro ro hydro tot mwh/h cet h f')
-    # INSTANCES curves contain a timeseries for each defined issue dates
-    # Get a list of available curves with issue dates within a timerange with:
-    # curve.search_instances(issue_date_from='2018-01-01', issue_date_to='2018-01-01')
-    ts_h = curve.get_instance(issue_date=today)
-    pd_s_h = ts_h.to_pandas() # convert TS object to pandas.Series object
-    pd_df_h = pd_s_h.to_frame() # convert pandas.Series to pandas.DataFrame
+    try:
+        today = get_issue_date()
+        # INSTANCE curve hour
+        curve = session.get_curve(name='pro ro hydro tot mwh/h cet h f')
+        # INSTANCES curves contain a timeseries for each defined issue dates
+        # Get a list of available curves with issue dates within a timerange with:
+        # curve.search_instances(issue_date_from='2018-01-01', issue_date_to='2018-01-01')
+        ts_h = curve.get_instance(issue_date=today)
+        pd_s_h = ts_h.to_pandas() # convert TS object to pandas.Series object
+        pd_df_h = pd_s_h.to_frame() # convert pandas.Series to pandas.DataFrame
 
-    return pd_df_h
+        return pd_df_h
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        # Create empty DataFrame with correct structure
+        pd_df_h = pd.DataFrame(columns=["Timestamp", 'Volue Forecast (MW)'])
+        pd_df_h.index.name = 'Timestamp'
+        return pd_df_h
 
 def align_and_combine_hydro_data(df_notified, df_actual, df_volue_forecast):
     # Ensure notified and actual dataframes are sorted and set the index to Timestamp
@@ -2985,7 +3039,8 @@ def fetch_intraday_balancing_activations():
 # Solar Production Analysis===================================================================
 # df_solar_notified = fetch_process_solar_notified()
 # df_solar_actual = fetch_process_solar_actual_production()
-# df_solar_volue = preprocess_volue_forecast(fetch_volue_solar_data())
+# df_solar_volue = fetch_volue_solar_data_15min()
+# df_solar_volue = preprocess_volue_forecast(fetch_volue_solar_data_15min())
 # df_solar = combine_solar_production_data(df_solar_notified, df_solar_actual, df_solar_volue)
 
 # st.dataframe(df_solar)
@@ -3063,8 +3118,11 @@ def fetch_intraday_balancing_activations():
 # Hydro Production Analysis=========================================================================================
 
 # df_hydro_reservoir_actual = fetch_process_hydro_water_reservoir_actual_production()
+# st.write(df_hydro_reservoir_actual)
 # df_hydro_river_actual = fetch_process_hydro_river_actual_production()
+# st.write(df_hydro_river_actual)
 # df_hydro_volue = fetch_volue_hydro_data()
+# st.write(df_hydro_volue)
 # df_hydro = align_and_combine_hydro_data(df_hydro_reservoir_actual, df_hydro_river_actual, df_hydro_volue)
 
 # st.dataframe(df_hydro)
