@@ -799,8 +799,13 @@ def fetch_volue_wind_data_15min():
     # Get a list of available curves with issue dates within a timerange with:
     # curve.search_instances(issue_date_from='2018-01-01', issue_date_to='2018-01-01')
     ts_15min = curve.get_instance(issue_date=today)
-    df_wind_15min = ts_15min.to_pandas() # convert TS object to pandas.Series object
-    df_wind_15min = df_wind_15min.to_frame() # convert pandas.Series to pandas.DataFrame
+    if ts_15min is None:
+        df_wind_15min = ts_15min.to_pandas() # convert TS object to pandas.Series object
+        df_wind_15min = df_wind_15min.to_frame() # convert pandas.Series to pandas.DataFrame
+    else:
+        ts_15min = curve.get_instance(issue_date=today - timedelta(days=1))
+        df_wind_15min = ts_15min.to_pandas() # convert TS object to pandas.Series object
+        df_wind_15min = df_wind_15min.to_frame() # convert pandas.Series to pandas.DataFrame
     return df_wind_15min
 
 # Adjusting the Volue forecast DataFrame
@@ -897,14 +902,15 @@ def predicting_wind_production_15min():
         row += 1
 
     workbook.close()
-
+    
     # Create Timestamp column
     dataset['Timestamp'] = dataset.apply(
         lambda row: pd.Timestamp(f"{row['Data']}") + pd.Timedelta(minutes=15 * (row['Interval'] - 1)),
         axis=1
     )
-    dataset['Timestamp'] = dataset['Timestamp'].dt.tz_localize('CET')
-
+    
+    dataset['Timestamp'] = dataset['Timestamp'].dt.tz_localize('CET', nonexistent='shift_forward')
+   
     # Add predictions to the dataset
     dataset['Prediction (MW)'] = rounded_values
 
@@ -2611,13 +2617,11 @@ def fetch_cross_border_balancing(acquiring_domain, connecting_domain):
 
     try:
         response = requests.get(url, params=params, headers=headers)
-        st.write(response.content)
-        response.raise_for_status()
         return process_cross_border_balancing_response(response.content, start_cet, end_cet)
 
     except requests.exceptions.RequestException as e:
         print(f"Error fetching cross-border balancing data: {e}")
-        return pd.DataFrame(columns=["Timestamp", "Balancing Flow (MW)"])  # Return empty DataFrame on failure
+        return pd.DataFrame()
 
 def process_cross_border_balancing_response(response_content, start_cet, end_cet):
     """ Parses the XML response and processes balancing data into a DataFrame """
