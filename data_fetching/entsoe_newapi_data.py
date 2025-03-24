@@ -799,7 +799,7 @@ def fetch_volue_wind_data_15min():
     # Get a list of available curves with issue dates within a timerange with:
     # curve.search_instances(issue_date_from='2018-01-01', issue_date_to='2018-01-01')
     ts_15min = curve.get_instance(issue_date=today)
-    if ts_15min is None:
+    if ts_15min is not None:
         df_wind_15min = ts_15min.to_pandas() # convert TS object to pandas.Series object
         df_wind_15min = df_wind_15min.to_frame() # convert pandas.Series to pandas.DataFrame
     else:
