@@ -21,7 +21,8 @@ from data_fetching.entsoe_newapi_data import fetch_process_hydro_water_reservoir
 from data_fetching.entsoe_newapi_data import fetch_consumption_forecast, fetch_actual_consumption, combine_consumption_data
 # Importing the unintended deviations data
 from data_fetching.entsoe_newapi_data import fetch_unintended_deviation_data
-
+# Importing the IGCC data
+from data_fetching.entsoe_newapi_data import fetch_igcc_netting_flows, plot_igcc_netting_flows
 
 #============================================================================Rendering the Intraday Balancing Market Page================================================================
 
@@ -261,7 +262,10 @@ def render_balancing_market_intraday_page():
         font=dict(family="Arial", size=14),
         margin=dict(l=40, r=40, t=60, b=40),
     )
-    
+
+    # Processing the IGCC data
+    df_igcc = fetch_igcc_netting_flows()
+
     # Split into two columns
     col1, col2 = st.columns(2)
 
@@ -346,6 +350,10 @@ def render_balancing_market_intraday_page():
         # Unintended Deviations Visualization
         st.header("Unintended Deviations Monitoring")
         st.plotly_chart(fig_unintended , use_container_width=True)
+
+        # IGCC Netting Flows Monitoring
+        st.header("IGCC Netting Flows Monitoring")
+        fig_igcc = plot_igcc_netting_flows(df_igcc)
 
 async def refresh_app():
     while True:
