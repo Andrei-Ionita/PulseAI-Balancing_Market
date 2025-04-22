@@ -1251,17 +1251,17 @@ def fetch_volue_solar_data_15min():
 	
 	return df_solar_15min
 
-# def fetch_volue_solar_data():
-#     today = get_issue_date()
-#     # INSTANCE curve 15 min
-#     curve = session.get_curve(name='pro ro spv ec00 mwh/h cet min15 f')
-#     # INSTANCES curves contain a timeseries for each defined issue dates
-#     # Get a list of available curves with issue dates within a timerange with:
-#     # curve.search_instances(issue_date_from='2018-01-01', issue_date_to='2018-01-01')
-#     ts_15min = curve.get_instance(issue_date=today)
-#     pd_s_15min = ts_15min.to_pandas() # convert TS object to pandas.Series object
-#     df_solar_15min = pd_s_15min.to_frame() # convert pandas.Series to pandas.DataFrame
-#     return df_solar_15min
+def fetch_volue_solar_data():
+    today = get_issue_date()
+    # INSTANCE curve 15 min
+    curve = session.get_curve(name='pro ro spv ec00 mwh/h cet min15 f')
+    # INSTANCES curves contain a timeseries for each defined issue dates
+    # Get a list of available curves with issue dates within a timerange with:
+    # curve.search_instances(issue_date_from='2018-01-01', issue_date_to='2018-01-01')
+    ts_15min = curve.get_instance(issue_date=today)
+    pd_s_15min = ts_15min.to_pandas() # convert TS object to pandas.Series object
+    df_solar_15min = pd_s_15min.to_frame() # convert pandas.Series to pandas.DataFrame
+    return df_solar_15min
 
 def combine_solar_production_data(df_notified, df_actual, df_forecast):
 	try:

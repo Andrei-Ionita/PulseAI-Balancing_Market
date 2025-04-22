@@ -14,7 +14,7 @@ from data_fetching.entsoe_data import wind_solar_generation, actual_generation_s
 # Importing the wind data
 from data_fetching.entsoe_newapi_data import fetch_process_wind_notified, fetch_process_wind_actual_production, preprocess_volue_forecast, fetch_volue_wind_data, fetch_volue_wind_data_15min, combine_wind_production_data, fetching_Cogealac_data_15min, predicting_wind_production_15min, add_solcast_forecast_to_wind_dataframe
 # Importing the solar data
-from data_fetching.entsoe_newapi_data import fetch_process_solar_notified, fetch_process_solar_actual_production, fetch_volue_solar_data_15min, combine_solar_production_data
+from data_fetching.entsoe_newapi_data import fetch_process_solar_notified, fetch_process_solar_actual_production, fetch_volue_solar_data, combine_solar_production_data
 # Importing the hydro data
 from data_fetching.entsoe_newapi_data import fetch_process_hydro_water_reservoir_actual_production, fetch_process_hydro_river_actual_production, fetch_volue_hydro_data, align_and_combine_hydro_data
 # Importing consumption data
@@ -72,7 +72,7 @@ def render_balancing_market_intraday_page():
     # Fetch notified and actual wind production and create the combined dataframe
     df_wind_notified = fetch_process_wind_notified()
     df_wind_actual = fetch_process_wind_actual_production()
-    df_wind_volue = preprocess_volue_forecast(fetch_volue_wind_data_15min())
+    df_wind_volue = preprocess_volue_forecast(fetch_volue_wind_data())
     df_wind = combine_wind_production_data(df_wind_notified, df_wind_actual, df_wind_volue)
 
     fetching_Cogealac_data_15min()
@@ -105,7 +105,7 @@ def render_balancing_market_intraday_page():
     # Processing the Solar Production
     df_solar_notified = fetch_process_solar_notified()
     df_solar_actual = fetch_process_solar_actual_production()
-    df_solar_volue = preprocess_volue_forecast(fetch_volue_solar_data_15min())
+    df_solar_volue = preprocess_volue_forecast(fetch_volue_solar_data())
     df_solar = combine_solar_production_data(df_solar_notified, df_solar_actual, df_solar_volue)
 
     # Step 1: Identify the last interval with actual production > 0
