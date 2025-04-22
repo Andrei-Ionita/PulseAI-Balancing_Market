@@ -8,6 +8,7 @@ from entsoe import EntsoePandasClient
 import os
 from dotenv import load_dotenv
 import asyncio
+import pytz
 
 from data_fetching.entsoe_data import fetch_intraday_imbalance_data  # Importing the function to fetch data
 from data_fetching.entsoe_data import wind_solar_generation, actual_generation_source       # Assuming this function is also available
@@ -108,14 +109,20 @@ def render_balancing_market_intraday_page():
     df_solar_volue = preprocess_volue_forecast(fetch_volue_solar_data())
     df_solar = combine_solar_production_data(df_solar_notified, df_solar_actual, df_solar_volue)
 
-    # Step 1: Identify the last interval with actual production > 0
+    # Filter solar data to only include today
+    cet_timezone = pytz.timezone("Europe/Berlin")
+    now_cet = datetime.now(cet_timezone)
+    end_of_today_cet = now_cet.replace(hour=23, minute=59, second=59, microsecond=999999)
+    df_solar_today = df_solar[df_solar['Timestamp'] <= end_of_today_cet].copy()
+
+    # Step 1: Identify the last interval with actual production > 0 (use original df_solar for this)
     last_actual_index = df_solar[df_solar['Actual Production (MW)'] > 0].index.max()
 
-    # Step 2: Compute Deviations
+    # Step 2: Compute Deviations (use original df_solar for this)
     df_solar['Deviation_Actual'] = df_solar['Actual Production (MW)'] - df_solar['Notified Production (MW)']
     df_solar['Deviation_Forecast'] = df_solar['Volue Forecast (MW)'] - df_solar['Notified Production (MW)']
 
-    # Step 3: Split the data for solid and dashed lines
+    # Step 3: Split the data for solid and dashed lines (use original df_solar for this)
     df_solar['Deviation_Combined'] = np.where(
         df_solar.index <= last_actual_index,
         df_solar['Deviation_Actual'],
@@ -127,14 +134,14 @@ def render_balancing_market_intraday_page():
         np.nan
     )
 
-    # Step 4: Visualization for Actual vs Notified Solar Productio
-    # Plot 1: Actual vs Notified Solar Production Over Time
+    # Step 4: Visualization for Actual vs Notified Solar Production
+    # Plot 1: Actual vs Notified Solar Production Over Time (Use filtered df_solar_today)
     fig_actual_vs_notified = px.line(
-        df_solar, 
+        df_solar_today, # Use filtered data for today only
         x='Timestamp', 
         y=['Notified Production (MW)', 'Actual Production (MW)', 'Volue Forecast (MW)'],
         labels={'value': 'Production (MW)', 'Timestamp': 'Timestamp'},
-        title="Actual vs Notified Solar Production (With Forecast)"
+        title="Actual vs Notified Solar Production (Today)" # Update title
     )
     # Update line styles
     fig_actual_vs_notified.update_traces(selector=dict(name='Notified Production (MW)'),
