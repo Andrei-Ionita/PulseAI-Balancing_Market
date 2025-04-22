@@ -22,7 +22,7 @@ from data_fetching.entsoe_newapi_data import fetch_consumption_forecast, fetch_a
 # Importing the unintended deviations data
 from data_fetching.entsoe_newapi_data import fetch_unintended_deviation_data
 # Importing the IGCC data
-from data_fetching.entsoe_newapi_data import fetch_igcc_netting_flows, plot_igcc_netting_flows
+from data_fetching.entsoe_newapi_data import fetch_igcc_netting_flows
 
 #============================================================================Rendering the Intraday Balancing Market Page================================================================
 
@@ -264,6 +264,40 @@ def render_balancing_market_intraday_page():
     )
 
     # Processing the IGCC data
+    def plot_igcc_netting_flows(df_igcc):
+        fig = go.Figure()
+
+        fig.add_trace(go.Scatter(
+            x=df_igcc["Timestamp"],
+            y=df_igcc["IGCC Import (MW)"],
+            mode="lines+markers",
+            name="IGCC Import",
+            line=dict(color="green")
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=df_igcc["Timestamp"],
+            y=df_igcc["IGCC Export (MW)"],
+            mode="lines+markers",
+            name="IGCC Export",
+            line=dict(color="red")
+        ))
+
+        fig.update_layout(
+            title={
+                "text": "IGCC Netting Flows Monitoring",
+                "x": 0.0,  # Align to left (0.0 = far left, 0.5 = center, 1.0 = right)
+                "xanchor": "left"
+            },
+            xaxis_title="Timestamp",
+            yaxis_title="Power Flow (MW)",
+            hovermode="x unified",
+            legend_title="Flow Type",
+            margin=dict(l=40, r=20, t=50, b=40)
+        )
+
+        # Render the chart inline with Streamlit
+        st.plotly_chart(fig, use_container_width=True)
     df_igcc = fetch_igcc_netting_flows()
 
     # Split into two columns
