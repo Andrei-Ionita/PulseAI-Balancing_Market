@@ -829,24 +829,38 @@ def fetch_volue_wind_data_15min():
 
 # Adjusting the Volue forecast DataFrame
 def preprocess_volue_forecast(df_forecast):
-	if df_forecast.empty:
-		return pd.DataFrame({'Timestamp': [], 'Volue Forecast (MW)': []})
-	
-	# Ensure index is datetime
-	if not isinstance(df_forecast.index, pd.DatetimeIndex):
-		df_forecast.index = pd.to_datetime(df_forecast.index)
-	
-	# Ensure column is named correctly
-	if df_forecast.columns[0] != 'Volue Forecast (MW)':
-		df_forecast.columns = ['Volue Forecast (MW)']
-	
-	# Reset index to make Timestamp a column
-	df_forecast = df_forecast.reset_index()
-	
-	# Sort by timestamp
-	df_forecast = df_forecast.sort_values('Timestamp')
-	
-	return df_forecast
+    if df_forecast.empty:
+        return pd.DataFrame({'Timestamp': [], 'Volue Forecast (MW)': []})
+    
+    # Ensure index is datetime
+    if not isinstance(df_forecast.index, pd.DatetimeIndex):
+        df_forecast.index = pd.to_datetime(df_forecast.index)
+    
+    # Ensure column is named correctly - handle potential existing index name
+    if df_forecast.columns[0] != 'Volue Forecast (MW)':
+         df_forecast = df_forecast.rename(columns={df_forecast.columns[0]: 'Volue Forecast (MW)'})
+    
+    # Reset index FIRST to make Timestamp a column
+    df_forecast = df_forecast.reset_index()
+    # Now rename the index column if it's not 'Timestamp'
+    if 'index' in df_forecast.columns:
+         df_forecast = df_forecast.rename(columns={'index': 'Timestamp'})
+    elif df_forecast.columns[0] != 'Timestamp' and df_forecast.columns[0] != 'Volue Forecast (MW)': # Handle case where index had a name
+         df_forecast = df_forecast.rename(columns={df_forecast.columns[0]: 'Timestamp'})
+
+    # Ensure Timestamp column exists before sorting
+    if 'Timestamp' not in df_forecast.columns:
+        print("Error: Timestamp column missing after reset_index in preprocess_volue_forecast")
+        # Attempt to recover if possible (e.g., if first column is the timestamp)
+        if pd.api.types.is_datetime64_any_dtype(df_forecast.iloc[:, 0]):
+             df_forecast = df_forecast.rename(columns={df_forecast.columns[0]: 'Timestamp'})
+        else:
+             return pd.DataFrame({'Timestamp': [], 'Volue Forecast (MW)': []}) # Cannot proceed
+
+    # Sort by timestamp NOW that it's a column
+    df_forecast = df_forecast.sort_values('Timestamp')
+    
+    return df_forecast
 
 # Solcast Forecast======================================
 def fetching_Cogealac_data_15min():
@@ -2999,115 +3013,116 @@ def fetch_igcc_netting_flows():
 # st.dataframe(df_deviations)
 
 # Wind Analysis================================================================================
-# df_wind_notified = fetch_process_wind_notified()
-# df_wind_actual = fetch_process_wind_actual_production()
-# # st.dataframe(df_wind_notified)
-# # st.dataframe(df_wind_actual)
+df_wind_notified = fetch_process_wind_notified()
+df_wind_actual = fetch_process_wind_actual_production()
+# st.dataframe(df_wind_notified)
+# st.dataframe(df_wind_actual)
+st.write(fetch_volue_wind_data())
+df_wind_volue = preprocess_volue_forecast(fetch_volue_wind_data())
+st.write(df_wind_volue)
+df_wind = combine_wind_production_data(df_wind_notified, df_wind_actual, df_wind_volue)
 
-# df_wind_volue = preprocess_volue_forecast(fetch_volue_wind_data_15min())
-# df_wind = combine_wind_production_data(df_wind_notified, df_wind_actual, df_wind_volue)
+fetching_Cogealac_data_15min()
+df_wind_solcast = predicting_wind_production_15min()
+df_wind = add_solcast_forecast_to_wind_dataframe(df_wind, df_wind_solcast)
 
-# fetching_Cogealac_data_15min()
-# df_wind_solcast = predicting_wind_production_15min()
-# df_wind = add_solcast_forecast_to_wind_dataframe(df_wind, df_wind_solcast)
+# Replace 0 with NaN in 'Actual Production (MW)' to identify missing values
+df_wind['Actual Production (MW)'] = df_wind['Actual Production (MW)'].replace(0, None)
 
-# # Replace 0 with NaN in 'Actual Production (MW)' to identify missing values
-# df_wind['Actual Production (MW)'] = df_wind['Actual Production (MW)'].replace(0, None)
+# Add columns to indicate when forecasts should be used
+df_wind['Volue Forecast (Filtered)'] = df_wind['Volue Forecast (MW)'].where(df_wind['Actual Production (MW)'].isna())
+df_wind['Solcast Forecast (Filtered)'] = df_wind['Solcast Forecast (MW)'].where(df_wind['Actual Production (MW)'].isna())
 
-# # Add columns to indicate when forecasts should be used
-# df_wind['Volue Forecast (Filtered)'] = df_wind['Volue Forecast (MW)'].where(df_wind['Actual Production (MW)'].isna())
-# df_wind['Solcast Forecast (Filtered)'] = df_wind['Solcast Forecast (MW)'].where(df_wind['Actual Production (MW)'].isna())
+df_wind = df_wind[df_wind["Notified Production (MW)"] > 0] 
 
-# df_wind = df_wind[df_wind["Notified Production (MW)"] > 0] 
+# Create a long-format DataFrame for Plotly
+df_wind_long = df_wind.melt(
+    id_vars=['Timestamp'],
+    value_vars=[
+        'Actual Production (MW)',
+        'Notified Production (MW)',
+        'Volue Forecast (Filtered)',
+        'Solcast Forecast (Filtered)'
+    ],
+    var_name='Type',
+    value_name='Production (MW)'
+)
 
-# # Create a long-format DataFrame for Plotly
-# df_wind_long = df_wind.melt(
-#     id_vars=['Timestamp'],
-#     value_vars=[
-#         'Actual Production (MW)',
-#         'Notified Production (MW)',
-#         'Volue Forecast (Filtered)',
-#         'Solcast Forecast (Filtered)'
-#     ],
-#     var_name='Type',
-#     value_name='Production (MW)'
-# )
-
-# # Remove rows where 'Production (MW)' is NaN
-# df_wind_long = df_wind_long[df_wind_long['Production (MW)'].notna()]
+# Remove rows where 'Production (MW)' is NaN
+df_wind_long = df_wind_long[df_wind_long['Production (MW)'].notna()]
 
 
-# # Interactive dashboard header
-# st.header("Wind Production Monitoring")
+# Interactive dashboard header
+st.header("Wind Production Monitoring")
 
-# # Plotting Actual vs Notified Wind Production with Forecasts
-# st.write("### Actual vs Notified Wind Production Over Time (With Forecasts)")
-# fig_wind_forecast = px.line(
-#     df_wind_long,
-#     x='Timestamp',
-#     y='Production (MW)',
-#     color='Type',
-#     line_dash='Type',
-#     labels={'Production (MW)': 'Production (MW)', 'Timestamp': 'Timestamp'},
-#     title="Actual vs Notified Wind Production (With Forecasts)"
-# )
+# Plotting Actual vs Notified Wind Production with Forecasts
+st.write("### Actual vs Notified Wind Production Over Time (With Forecasts)")
+fig_wind_forecast = px.line(
+    df_wind_long,
+    x='Timestamp',
+    y='Production (MW)',
+    color='Type',
+    line_dash='Type',
+    labels={'Production (MW)': 'Production (MW)', 'Timestamp': 'Timestamp'},
+    title="Actual vs Notified Wind Production (With Forecasts)"
+)
 
-# # Customize styles: Notified should always be solid
-# fig_wind_forecast.for_each_trace(lambda trace: trace.update(line_dash=None) if trace.name == 'Notified Production (MW)' else None)
+# Customize styles: Notified should always be solid
+fig_wind_forecast.for_each_trace(lambda trace: trace.update(line_dash=None) if trace.name == 'Notified Production (MW)' else None)
 
-# # Show the plot
-# st.plotly_chart(fig_wind_forecast, use_container_width=True)
+# Show the plot
+st.plotly_chart(fig_wind_forecast, use_container_width=True)
 
-# # Assuming df_wind is your DataFrame with the following columns:
-# # 'Timestamp', 'Notified Production (MW)', 'Actual Production (MW)', 'Volue Forecast (MW)', 'Solcast Forecast (MW)'
+# Assuming df_wind is your DataFrame with the following columns:
+# 'Timestamp', 'Notified Production (MW)', 'Actual Production (MW)', 'Volue Forecast (MW)', 'Solcast Forecast (MW)'
 
-# # Step 1: Compute deviations
-# df_wind['Deviation_Actual'] = df_wind['Actual Production (MW)'] - df_wind['Notified Production (MW)']
-# df_wind['Deviation_ValueForecast'] = df_wind['Volue Forecast (MW)'] - df_wind['Notified Production (MW)']
-# df_wind['Deviation_SolcastForecast'] = df_wind['Solcast Forecast (MW)'] - df_wind['Notified Production (MW)']
+# Step 1: Compute deviations
+df_wind['Deviation_Actual'] = df_wind['Actual Production (MW)'] - df_wind['Notified Production (MW)']
+df_wind['Deviation_ValueForecast'] = df_wind['Volue Forecast (MW)'] - df_wind['Notified Production (MW)']
+df_wind['Deviation_SolcastForecast'] = df_wind['Solcast Forecast (MW)'] - df_wind['Notified Production (MW)']
 
-# # Step 2: Combine Actual and Forecasted Deviations
-# df_wind['Deviation_Final'] = np.where(
-#     df_wind['Actual Production (MW)'].notna(),
-#     df_wind['Deviation_Actual'],
-#     np.nan
-# )
+# Step 2: Combine Actual and Forecasted Deviations
+df_wind['Deviation_Final'] = np.where(
+    df_wind['Actual Production (MW)'].notna(),
+    df_wind['Deviation_Actual'],
+    np.nan
+)
 
-# # For forecasting periods
-# forecast_mask = df_wind['Actual Production (MW)'].isna()
-# df_wind.loc[forecast_mask, 'Deviation_Final_ValueForecast'] = df_wind['Deviation_ValueForecast']
-# df_wind.loc[forecast_mask, 'Deviation_Final_SolcastForecast'] = df_wind['Deviation_SolcastForecast']
+# For forecasting periods
+forecast_mask = df_wind['Actual Production (MW)'].isna()
+df_wind.loc[forecast_mask, 'Deviation_Final_ValueForecast'] = df_wind['Deviation_ValueForecast']
+df_wind.loc[forecast_mask, 'Deviation_Final_SolcastForecast'] = df_wind['Deviation_SolcastForecast']
 
-# # Remove the last timestamp where 'Notified Production (MW)' is incomplete (e.g., NaN or 0)
-# df_wind_filtered = df_wind[df_wind['Notified Production (MW)'] > 0]
+# Remove the last timestamp where 'Notified Production (MW)' is incomplete (e.g., NaN or 0)
+df_wind_filtered = df_wind[df_wind['Notified Production (MW)'] > 0]
 
-# # Plotting the deviations
-# fig = px.line(df_wind_filtered, x='Timestamp', y='Deviation_Final',
-#               labels={'Deviation_Final': 'Deviation (MW)', 'Timestamp': 'Timestamp'},
-#               title="Actual and Forecasted Deviations from Notified Production")
+# Plotting the deviations
+fig = px.line(df_wind_filtered, x='Timestamp', y='Deviation_Final',
+              labels={'Deviation_Final': 'Deviation (MW)', 'Timestamp': 'Timestamp'},
+              title="Actual and Forecasted Deviations from Notified Production")
 
-# # Add Value Forecast as dashed line
-# fig.add_scatter(x=df_wind_filtered['Timestamp'], 
-#                 y=df_wind_filtered['Deviation_Final_ValueForecast'], 
-#                 mode='lines', 
-#                 line=dict(dash='dash', color='red'), 
-#                 name='Deviation - Value Forecast')
+# Add Value Forecast as dashed line
+fig.add_scatter(x=df_wind_filtered['Timestamp'], 
+                y=df_wind_filtered['Deviation_Final_ValueForecast'], 
+                mode='lines', 
+                line=dict(dash='dash', color='red'), 
+                name='Deviation - Value Forecast')
 
-# # Add Solcast Forecast as dashed line
-# fig.add_scatter(x=df_wind_filtered['Timestamp'], 
-#                 y=df_wind_filtered['Deviation_Final_SolcastForecast'], 
-#                 mode='lines', 
-#                 line=dict(dash='dash', color='orange'), 
-#                 name='Deviation - Solcast Forecast')
+# Add Solcast Forecast as dashed line
+fig.add_scatter(x=df_wind_filtered['Timestamp'], 
+                y=df_wind_filtered['Deviation_Final_SolcastForecast'], 
+                mode='lines', 
+                line=dict(dash='dash', color='orange'), 
+                name='Deviation - Solcast Forecast')
 
-# fig.update_layout(
-#     xaxis_title='Timestamp',
-#     yaxis_title='Deviation (MW)',
-#     legend_title='Type'
-# )
+fig.update_layout(
+    xaxis_title='Timestamp',
+    yaxis_title='Deviation (MW)',
+    legend_title='Type'
+)
 
-# # Display the chart in Streamlit
-# st.plotly_chart(fig, use_container_width=True)
+# Display the chart in Streamlit
+st.plotly_chart(fig, use_container_width=True)
 
 
 
@@ -3412,44 +3427,44 @@ st.dataframe(df_unintended_deviation)
 # st.dataframe(df_balancing_activations)
 
 # 11. IGCC flows================================================================================================================================================
-df_igcc_netting_flows = fetch_igcc_netting_flows()
-st.dataframe(df_igcc_netting_flows)
+# df_igcc_netting_flows = fetch_igcc_netting_flows()
+# st.dataframe(df_igcc_netting_flows)
 
 
-def plot_igcc_netting_flows(df_igcc):
-    fig = go.Figure()
+# def plot_igcc_netting_flows(df_igcc):
+#     fig = go.Figure()
 
-    fig.add_trace(go.Scatter(
-        x=df_igcc["Timestamp"],
-        y=df_igcc["IGCC Import (MW)"],
-        mode="lines+markers",
-        name="IGCC Import",
-        line=dict(color="green")
-    ))
+#     fig.add_trace(go.Scatter(
+#         x=df_igcc["Timestamp"],
+#         y=df_igcc["IGCC Import (MW)"],
+#         mode="lines+markers",
+#         name="IGCC Import",
+#         line=dict(color="green")
+#     ))
 
-    fig.add_trace(go.Scatter(
-        x=df_igcc["Timestamp"],
-        y=df_igcc["IGCC Export (MW)"],
-        mode="lines+markers",
-        name="IGCC Export",
-        line=dict(color="red")
-    ))
+#     fig.add_trace(go.Scatter(
+#         x=df_igcc["Timestamp"],
+#         y=df_igcc["IGCC Export (MW)"],
+#         mode="lines+markers",
+#         name="IGCC Export",
+#         line=dict(color="red")
+#     ))
 
-    fig.update_layout(
-        title={
-            "text": "IGCC Netting Flows Monitoring",
-            "x": 0.0,  # Align to left (0.0 = far left, 0.5 = center, 1.0 = right)
-            "xanchor": "left"
-        },
-        xaxis_title="Timestamp",
-        yaxis_title="Power Flow (MW)",
-        hovermode="x unified",
-        legend_title="Flow Type",
-        margin=dict(l=40, r=20, t=50, b=40)
-    )
+#     fig.update_layout(
+#         title={
+#             "text": "IGCC Netting Flows Monitoring",
+#             "x": 0.0,  # Align to left (0.0 = far left, 0.5 = center, 1.0 = right)
+#             "xanchor": "left"
+#         },
+#         xaxis_title="Timestamp",
+#         yaxis_title="Power Flow (MW)",
+#         hovermode="x unified",
+#         legend_title="Flow Type",
+#         margin=dict(l=40, r=20, t=50, b=40)
+#     )
 
-    # Render the chart inline with Streamlit
-    st.plotly_chart(fig, use_container_width=True)
+#     # Render the chart inline with Streamlit
+#     st.plotly_chart(fig, use_container_width=True)
 
 
-plot_igcc_netting_flows(df_igcc_netting_flows)
+# plot_igcc_netting_flows(df_igcc_netting_flows)
