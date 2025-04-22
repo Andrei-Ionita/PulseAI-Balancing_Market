@@ -12,7 +12,7 @@ import asyncio
 from data_fetching.entsoe_data import fetch_intraday_imbalance_data  # Importing the function to fetch data
 from data_fetching.entsoe_data import wind_solar_generation, actual_generation_source       # Assuming this function is also available
 # Importing the wind data
-from data_fetching.entsoe_newapi_data import fetch_process_wind_notified, fetch_process_wind_actual_production, preprocess_volue_forecast, fetch_volue_wind_data, fetch_volue_wind_data_15min, combine_wind_production_data, fetching_Cogealac_data_15min, predicting_wind_production_15min, add_solcast_forecast_to_wind_dataframe
+from data_fetching.entsoe_newapi_data import fetch_process_wind_notified, fetch_process_wind_actual_production, preprocess_volue_forecast, fetch_volue_wind_data, combine_wind_production_data, fetching_Cogealac_data_15min, predicting_wind_production_15min, add_solcast_forecast_to_wind_dataframe
 # Importing the solar data
 from data_fetching.entsoe_newapi_data import fetch_process_solar_notified, fetch_process_solar_actual_production, fetch_volue_solar_data, combine_solar_production_data
 # Importing the hydro data
